@@ -1,0 +1,28 @@
+{
+  "name": "kstrike",
+  "version": "1.0.0",
+  "description": "Repository for Multiplayer FPS Game.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/altf4-games/KStrike.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/altf4-games/KStrike/issues"
+  },
+  "homepage": "https://github.com/altf4-games/KStrike#readme",
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "vite": "^8.1.5"
+  }
+}

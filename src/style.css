@@ -1,0 +1,28 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+
+:root { font-family: Inter, sans-serif; color: #f8fafc; background: #0f1115; }
+* { box-sizing: border-box; }
+body { margin: 0; overflow: hidden; }
+#app, #game-canvas { width: 100vw; height: 100vh; display: block; }
+#game-canvas { position: fixed; inset: 0; }
+.loading, .intro { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 2; background: #0f1115; transition: opacity .45s ease, visibility .45s ease; }
+.loading--done { opacity: 0; visibility: hidden; pointer-events: none; }
+.loading__mark { font-size: clamp(1.75rem, 4vw, 3.4rem); font-weight: 800; letter-spacing: -.09em; }
+.loading__mark span { color: #2563eb; }
+.loading__bar { width: 180px; height: 2px; margin: 24px 0 13px; background: #28313b; overflow: hidden; }
+.loading__bar i { display: block; width: 65%; height: 100%; background: #2563eb; animation: load .65s ease-out forwards; transform-origin: left; }
+.loading p, .eyebrow, .hint { margin: 0; font: 500 .63rem/1.4 'JetBrains Mono', monospace; letter-spacing: .16em; color: #94a3b8; }
+@keyframes load { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.intro { align-items: flex-start; padding: clamp(2rem, 7vw, 7rem); background: linear-gradient(90deg, rgba(15,17,21,.9), rgba(15,17,21,.34) 55%, transparent); transition: opacity .45s ease, transform .45s ease; }
+.intro[hidden] { display: none; }
+.intro--dismissed { opacity: 0; transform: translateX(-28px); pointer-events: none; }
+.eyebrow { color: #69a0ff; margin-bottom: 18px; }
+h1 { margin: 0; font-size: clamp(3.7rem, 10vw, 8rem); line-height: .78; letter-spacing: -.09em; font-weight: 800; }
+h1 em { color: #2563eb; font-style: normal; }
+.intro__copy { margin: 29px 0; color: #c3ccd6; font-size: .9rem; line-height: 1.65; }
+button { border: 0; padding: 15px 18px; color: #fff; background: #2563eb; font: 700 .72rem 'JetBrains Mono', monospace; letter-spacing: .08em; cursor: pointer; transition: background .2s, transform .2s; }
+button:hover { background: #3574ef; transform: translateY(-2px); } button span { margin-left: 18px; font-size: 1rem; }
+.hint { margin-top: 22px; font-size: .56rem; } .hint small { color: #5f6a76; font-size: inherit; }
+.hud-corner { position: fixed; bottom: 27px; right: 31px; z-index: 1; display: flex; gap: 8px; align-items: center; font: 500 .55rem 'JetBrains Mono', monospace; letter-spacing: .11em; color: #b9c4d1; }
+.hud-corner i { width: 7px; height: 7px; background: #22c55e; border-radius: 50%; box-shadow: 0 0 12px #22c55e; }
+@media (max-width: 600px) { .intro { justify-content: flex-end; padding-bottom: 4rem; background: linear-gradient(0deg, rgba(15,17,21,.92), rgba(15,17,21,.25)); } .hud-corner { bottom: 16px; right: 16px; } }
