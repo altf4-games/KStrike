@@ -1,25 +1,88 @@
 # KStrike
 
-Fast browser FPS project. The current build contains Phase 1: a responsive Three.js training arena with scene lighting, fog, animated targets, and an entry screen.
+KStrike is a fast-paced browser FPS deathmatch built with Three.js and Colyseus.
+
+Made by **AltF4 Games — Pradyum Mistry**.
+
+- [Play my other game](https://store.steampowered.com/app/4539460/Fragments_of_Fear/)
+- [More games on itch.io](https://altf4-games.itch.io/)
+
+## Screenshots
+
+![D2 deathmatch gameplay](screenshots/Screenshot%202026-07-19%20223644.png)
+
+![KStrike firefight](screenshots/Screenshot%202026-07-19%20223703.png)
+
+![KStrike D2 arena](screenshots/Screenshot%202026-07-19%20223741.png)
+
+## Features
+
+- Multiplayer deathmatch with public matchmaking and private room codes
+- D2 desert arena and a compact training arena
+- First-person movement with sprinting, crouching, jumping, momentum, and collision
+- AR-01 automatic rifle and switchable SG-12 shotgun
+- Networked blocky player avatars with idle, movement, crouch, jump, fire, and reload animation
+- Kill feed, scoreboard, end-of-match leaderboard, and kill-streak cards
+- Remote-player firing effects, weapon audio, hit markers, bullet decals, and out-of-map recovery
+
+## Controls
+
+| Action | Control |
+| --- | --- |
+| Move | `WASD` |
+| Look / fire | Mouse / left click |
+| Sprint | `Shift` |
+| Crouch | `Ctrl` or `C` |
+| Jump | `Space` |
+| Reload | `R` |
+| Switch weapons | `1` / `2` or mouse wheel |
+| Leaderboard | Hold `Tab` |
+| Pause menu | `Esc` |
 
 ## Run locally
 
+Install dependencies once:
+
 ```bash
 npm install
+npm --prefix server install
+```
+
+Start the client:
+
+```bash
 npm run dev
 ```
 
-In a second terminal, start multiplayer with `npm run dev:server`. The client automatically joins the local training room when the player enters the arena.
+In a second terminal, start the multiplayer server:
 
-Build a production bundle with `npm run build`.
+```bash
+npm run dev:server
+```
 
-## Deploy
+Open the Vite URL shown in the client terminal. Use a normal window and an incognito window to test a local multiplayer match.
 
-Deploy the frontend to Vercel from this repository. Set the `VITE_COLYSEUS_URL` environment variable to the public WebSocket URL of the server, for example `wss://kstrike-server.onrender.com`.
+Create a production client build with:
 
-Deploy the server as a Render Web Service using `render.yaml`. Render provides a free tier for this prototype; it can spin down after inactivity, so the first player may need to wait for it to wake.
+```bash
+npm run build
+```
 
-After both are deployed, redeploy the Vercel project with `VITE_COLYSEUS_URL` set. The browser client will then connect to the public multiplayer server instead of `localhost:2567`.
+## Deployment
+
+Deploy the frontend to Vercel. Set `VITE_COLYSEUS_URL` to the public WebSocket URL of the server, for example:
+
+```text
+wss://kstrike-server.onrender.com
+```
+
+Deploy the Colyseus server as a persistent Node web service, such as Render, using [`render.yaml`](render.yaml). The server exposes `/health` for host health checks.
+
+After deploying the server, redeploy the Vercel frontend with the environment variable set.
+
+## Source code
+
+The source is available on [GitHub](https://github.com/altf4-games/kstrike).
 
 ## Asset attribution
 
