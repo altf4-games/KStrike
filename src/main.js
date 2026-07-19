@@ -15,7 +15,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color('#0f1115');
 scene.fog = new THREE.FogExp2('#0f1115', 0.024);
 
-const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 180);
+const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.03, 180);
 const player = new THREE.Group();
 const pitch = new THREE.Group();
 player.position.set(12, 0, 10);
@@ -54,7 +54,7 @@ const floor = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), concrete);
 floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
 
 // Compact, readable deathmatch arena assembled from simple collision-ready blocks.
-box(16, 5, 1, 0, 2.5, -12); box(1, 5, 24, -15, 2.5, 0); box(1, 5, 24, 15, 2.5, 0);
+box(16, 5, 1, 0, 2.5, -12); box(1, 5, 24, -15, 2.5, 0); box(1, 5, 24, 15, 2.5, 0); box(30, 5, 1, 0, 2.5, 12);
 box(7, 3.5, 3, -7, 1.75, -4); box(7, 3.5, 3, 7, 1.75, 3);
 box(4, 6, 4, -6, 3, 6, dark); box(4, 6, 4, 7, 3, -7, dark);
 box(8, 1.1, 2.2, 0, 0.55, 8, dark); box(2, 1.1, 8, -10, 0.55, 1, dark); box(2, 1.1, 8, 10, 0.55, -1, dark);
@@ -78,45 +78,76 @@ for (const [x, z, mat] of [[-3, -8, emissiveRed], [3, -8, emissiveBlue], [0, 1, 
 
 const keys = new Set();
 const playerVelocity = new THREE.Vector3();
+const horizontalVelocity = new THREE.Vector3();
 const direction = new THREE.Vector3();
 const up = new THREE.Vector3(0, 1, 0);
 const playerRadius = 0.38;
 const walkSpeed = 5.1;
 const sprintSpeed = 8.1;
+const crouchSpeed = 2.65;
 const gravity = 25;
 const jumpVelocity = 8.5;
+const standHeight = 1.68;
+const crouchHeight = 1.12;
 let grounded = true;
 let locked = false;
+let crouching = false;
+let bobTime = 0;
 const intro = document.querySelector('#intro-screen');
 const enterButton = document.querySelector('#enter-button');
 const speedReadout = document.querySelector('#movement-readout strong');
 
 function blocksPosition(x, z) {
-  return colliders.some((collider) => x + playerRadius > collider.minX && x - playerRadius < collider.maxX
-    && z + playerRadius > collider.minZ && z - playerRadius < collider.maxZ);
+  return colliders.some((collider) => {
+    const closestX = THREE.MathUtils.clamp(x, collider.minX, collider.maxX);
+    const closestZ = THREE.MathUtils.clamp(z, collider.minZ, collider.maxZ);
+    const dx = x - closestX;
+    const dz = z - closestZ;
+    return dx * dx + dz * dz < playerRadius * playerRadius;
+  });
+}
+
+function moveWithCollision(delta) {
+  const nextX = player.position.x + horizontalVelocity.x * delta;
+  const nextZ = player.position.z + horizontalVelocity.z * delta;
+  if (!blocksPosition(nextX, player.position.z)) player.position.x = nextX;
+  else horizontalVelocity.x = 0;
+  if (!blocksPosition(player.position.x, nextZ)) player.position.z = nextZ;
+  else horizontalVelocity.z = 0;
 }
 
 function movePlayer(delta) {
-  if (!locked) return;
+  if (!locked) { speedReadout.textContent = '0.0'; return; }
   direction.set(0, 0, 0);
   if (keys.has('KeyW')) direction.z -= 1;
   if (keys.has('KeyS')) direction.z += 1;
   if (keys.has('KeyA')) direction.x -= 1;
   if (keys.has('KeyD')) direction.x += 1;
-  const moving = direction.lengthSq() > 0;
-  if (moving) {
+  const hasInput = direction.lengthSq() > 0;
+  crouching = keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC');
+  const sprinting = !crouching && (keys.has('ShiftLeft') || keys.has('ShiftRight'));
+  let targetSpeed = crouching ? crouchSpeed : (sprinting ? sprintSpeed : walkSpeed);
+  const targetVelocity = new THREE.Vector3();
+  if (hasInput) {
     direction.normalize().applyAxisAngle(up, player.rotation.y);
-    const speed = keys.has('ShiftLeft') || keys.has('ShiftRight') ? sprintSpeed : walkSpeed;
-    const nextX = player.position.x + direction.x * speed * delta;
-    const nextZ = player.position.z + direction.z * speed * delta;
-    if (!blocksPosition(nextX, player.position.z)) player.position.x = nextX;
-    if (!blocksPosition(player.position.x, nextZ)) player.position.z = nextZ;
+    targetVelocity.copy(direction).multiplyScalar(targetSpeed);
   }
-  if (grounded && keys.has('Space')) { playerVelocity.y = jumpVelocity; grounded = false; }
+  const response = hasInput ? 15 : 7;
+  horizontalVelocity.x = THREE.MathUtils.damp(horizontalVelocity.x, targetVelocity.x, response, delta);
+  horizontalVelocity.z = THREE.MathUtils.damp(horizontalVelocity.z, targetVelocity.z, response, delta);
+  moveWithCollision(delta);
+  if (grounded && keys.has('Space') && !crouching) { playerVelocity.y = jumpVelocity; grounded = false; }
   playerVelocity.y -= gravity * delta;
   player.position.y += playerVelocity.y * delta;
   if (player.position.y <= 0) { player.position.y = 0; playerVelocity.y = 0; grounded = true; }
-  speedReadout.textContent = moving ? ((keys.has('ShiftLeft') || keys.has('ShiftRight')) ? '8.1' : '5.1') : '0.0';
+  const horizontalSpeed = Math.hypot(horizontalVelocity.x, horizontalVelocity.z);
+  if (grounded && horizontalSpeed > 0.1) bobTime += delta * (sprinting ? 13 : crouching ? 7 : 10);
+  const bobAmount = grounded ? Math.sin(bobTime) * Math.min(horizontalSpeed / sprintSpeed, 1) * 0.026 : 0;
+  const targetHeight = crouching ? crouchHeight : standHeight;
+  camera.position.y = THREE.MathUtils.damp(camera.position.y, targetHeight + bobAmount, 18, delta);
+  camera.fov = THREE.MathUtils.damp(camera.fov, sprinting && hasInput ? 67 : 62, 10, delta);
+  camera.updateProjectionMatrix();
+  speedReadout.textContent = horizontalSpeed.toFixed(1);
 }
 
 function lockArena() { canvas.requestPointerLock(); }
