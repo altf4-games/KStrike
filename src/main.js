@@ -86,7 +86,8 @@ const playerVelocity = new THREE.Vector3();
 const horizontalVelocity = new THREE.Vector3();
 const direction = new THREE.Vector3();
 const up = new THREE.Vector3(0, 1, 0);
-const playerRadius = 0.38;
+// A generous radius keeps the camera and weapon comfortably clear of arena geometry.
+const playerRadius = 0.56;
 const walkSpeed = 5.1;
 const sprintSpeed = 8.1;
 const crouchSpeed = 2.65;
@@ -197,12 +198,18 @@ function blocksPosition(x, z) {
 }
 
 function moveWithCollision(delta) {
-  const nextX = player.position.x + horizontalVelocity.x * delta;
-  const nextZ = player.position.z + horizontalVelocity.z * delta;
-  if (!blocksPosition(nextX, player.position.z)) player.position.x = nextX;
-  else horizontalVelocity.x = 0;
-  if (!blocksPosition(player.position.x, nextZ)) player.position.z = nextZ;
-  else horizontalVelocity.z = 0;
+  // Sweep in short increments so a slow frame cannot carry the player through a thin wall.
+  const distance = Math.hypot(horizontalVelocity.x * delta, horizontalVelocity.z * delta);
+  const steps = Math.max(1, Math.ceil(distance / (playerRadius * 0.45)));
+  const stepDelta = delta / steps;
+  for (let step = 0; step < steps; step += 1) {
+    const nextX = player.position.x + horizontalVelocity.x * stepDelta;
+    const nextZ = player.position.z + horizontalVelocity.z * stepDelta;
+    if (!blocksPosition(nextX, player.position.z)) player.position.x = nextX;
+    else horizontalVelocity.x = 0;
+    if (!blocksPosition(player.position.x, nextZ)) player.position.z = nextZ;
+    else horizontalVelocity.z = 0;
+  }
 }
 
 function movePlayer(delta) {
