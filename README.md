@@ -23,4 +23,11 @@ After both are deployed, redeploy the Vercel project with `VITE_COLYSEUS_URL` se
 
 ## Asset attribution
 
-The `de_dust_2.glb` map asset is by Neo_minigan on Sketchfab, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): [De_Dust 2 with real light](https://sketchfab.com/3d-models/de-dust-2-with-real-light-4ce74cd95c584ce9b12b5ed9dc418db5).
+### Weapons
+
+- `near_future_assault_rifle.glb` — [near future Assault rifle](https://sketchfab.com/3d-models/near-future-assault-rifle-34c6eb98deaa4d2480bc0351d7897d16) by Ahmed Abu Ajamiah, licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- [FN SCAR-Assault Rifle](https://sketchfab.com/3d-models/fn-scar-assault-rifle-7b7328a5de3f481aa13acbc0e8e08076) by CastleBravo, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+### Map
+
+- `de_dust_2.glb` — [De_Dust 2 with real light](https://sketchfab.com/3d-models/de-dust-2-with-real-light-4ce74cd95c584ce9b12b5ed9dc418db5) by Neo_minigan, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The model page credits Valve for the original map.

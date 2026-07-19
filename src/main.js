@@ -306,6 +306,7 @@ let crouching = false;
 let bobTime = 0;
 const intro = document.querySelector("#intro-screen");
 const enterButton = document.querySelector("#enter-button");
+const exitMatchButton = document.querySelector('#exit-match-button');
 const speedReadout = document.querySelector("#movement-readout strong");
 const ammoCount = document.querySelector("#ammo-count");
 const reloadStatus = document.querySelector("#reload-status");
@@ -570,6 +571,7 @@ async function startMatchConnection(options = {}) {
       networkStatus.textContent = 'OFFLINE // TRAINING';
       remotePlayers.forEach((avatar) => scene.remove(avatar));
       remotePlayers.clear();
+      exitMatchButton.hidden = true;
     });
     room.onMessage('kill', addKillFeed);
     room.onMessage('hit', () => {
@@ -597,6 +599,7 @@ async function startMatchConnection(options = {}) {
     enterButton.innerHTML = 'ENTER ARENA <span>&gt;</span>';
     lobby.hidden = true;
     intro.hidden = false;
+    exitMatchButton.hidden = false;
     return room;
   } catch (error) {
     networkStatus.textContent = 'OFFLINE // TRAINING';
@@ -864,30 +867,35 @@ function getMapGroundHeight(x, z, rayStartY = 80, maxGroundY = Infinity, referen
   return groundHit ? groundHit.point.y + 0.03 : 0;
 }
 
+function getStableD2Surface(x, z) {
+  const samples = [[0, 0], [-0.55, -0.55], [0.55, -0.55], [-0.55, 0.55], [0.55, 0.55]];
+  const heights = samples.map(([offsetX, offsetZ]) => getMapGroundHeight(x + offsetX, z + offsetZ, 80, Infinity, 80));
+  if (heights.some((height) => height < 0.15)) return null;
+  if (Math.max(...heights) - Math.min(...heights) > 1.25) return null;
+  return heights.reduce((total, height) => total + height, 0) / heights.length;
+}
+
 function snapPlayerToMapGround() {
   if (activeMapId !== 'd2' || !d2MapLoaded) return;
   let spawnX = player.position.x;
   let spawnZ = player.position.z;
-  let groundHeight = getMapGroundHeight(spawnX, spawnZ, 80, Infinity, 80);
-  // The model's lowest vertex is below several playable floors. If a server spawn
-  // has no walkable surface, find the nearest positive-height surface instead.
-  if (groundHeight < 0.15) {
-    const offsets = [0, -6, 6, -12, 12, -18, 18, -24, 24, -30, 30];
-    let found = false;
-    for (const offsetX of offsets) {
-      for (const offsetZ of offsets) {
-        const candidateHeight = getMapGroundHeight(offsetX, offsetZ, 80, Infinity, 80);
-        if (candidateHeight < 0.15) continue;
-        spawnX = offsetX;
-        spawnZ = offsetZ;
-        groundHeight = candidateHeight;
-        found = true;
-        break;
-      }
-      if (found) break;
+  let groundHeight = getStableD2Surface(spawnX, spawnZ);
+  // Reject spawn points that land on thin props, open air, or non-walkable map pieces.
+  if (groundHeight === null) {
+    const candidates = [
+      [0, 0], [-8, 6], [8, 6], [-10, -8], [10, -8],
+      [-20, 0], [20, 0], [-24, -16], [24, -16],
+    ];
+    for (const [candidateX, candidateZ] of candidates) {
+      const candidateHeight = getStableD2Surface(candidateX, candidateZ);
+      if (candidateHeight === null) continue;
+      spawnX = candidateX;
+      spawnZ = candidateZ;
+      groundHeight = candidateHeight;
+      break;
     }
   }
-  player.position.set(spawnX, groundHeight, spawnZ);
+  player.position.set(spawnX, groundHeight ?? 0, spawnZ);
   playerVelocity.y = 0;
   grounded = true;
 }
@@ -999,7 +1007,32 @@ function lockArena() {
     document.documentElement.requestFullscreen().catch(() => {});
   canvas.requestPointerLock();
 }
+
+async function leaveToMainMenu() {
+  triggerHeld = false;
+  keys.clear();
+  const room = multiplayerRoom;
+  multiplayerRoom = undefined;
+  if (document.pointerLockElement) document.exitPointerLock();
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  remotePlayers.forEach((avatar) => scene.remove(avatar));
+  remotePlayers.clear();
+  killFeed.replaceChildren();
+  matchResult.hidden = true;
+  killStreak = 0;
+  updateKillStreak();
+  localAlive = true;
+  localPositionInitialized = false;
+  networkStatus.textContent = 'OFFLINE // MAIN MENU';
+  exitMatchButton.hidden = true;
+  intro.hidden = true;
+  lobby.hidden = false;
+  lobbyStatus.textContent = 'SELECT A MAP AND FIND A MATCH';
+  if (room) await room.leave();
+}
+
 enterButton.addEventListener("click", lockArena);
+exitMatchButton.addEventListener('click', () => { leaveToMainMenu().catch(console.error); });
 canvas.addEventListener("click", () => {
   if (!locked) lockArena();
 });
@@ -1007,6 +1040,7 @@ document.addEventListener("pointerlockchange", () => {
   locked = document.pointerLockElement === canvas;
   intro.classList.toggle("intro--dismissed", locked);
   if (!locked) {
+    if (!multiplayerRoom && !lobby.hidden) return;
     triggerHeld = false;
     intro.hidden = false;
     enterButton.innerHTML = `RESUME ${mapPresentation[activeMapId]?.code || 'MATCH'} <span>↗</span>`;

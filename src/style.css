@@ -23,7 +23,7 @@ body { margin: 0; overflow: hidden; }
 h1 { margin: 0; font-size: clamp(3.7rem, 10vw, 8rem); line-height: .78; letter-spacing: -.09em; font-weight: 800; }
 h1 em { color: #2563eb; font-style: normal; }
 .intro__copy { margin: 29px 0; color: #c3ccd6; font-size: .9rem; line-height: 1.65; }
-button { border: 0; padding: 15px 18px; color: #fff; background: #2563eb; font: 700 .72rem 'JetBrains Mono', monospace; letter-spacing: .08em; cursor: pointer; transition: background .2s, transform .2s; }
+button { border: 0; padding: 15px 18px; color: #fff; background: #2563eb; font: 700 .72rem 'JetBrains Mono', monospace; letter-spacing: .08em; cursor: pointer; transition: background .2s, transform .2s; }.intro__exit { margin-top: 9px; }
 button:hover { background: #3574ef; transform: translateY(-2px); } button span { margin-left: 18px; font-size: 1rem; }
 .hint { margin-top: 22px; font-size: .56rem; } .hint small { color: #5f6a76; font-size: inherit; }
 .hud-corner { position: fixed; bottom: 27px; right: 31px; z-index: 1; display: flex; gap: 8px; align-items: center; font: 500 .55rem 'JetBrains Mono', monospace; letter-spacing: .11em; color: #b9c4d1; }
