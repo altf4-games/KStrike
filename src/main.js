@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import './style.css';
 
 const canvas = document.querySelector('#game-canvas');
@@ -107,11 +108,13 @@ const reloadStatus = document.querySelector('#reload-status');
 
 // An intentionally lightweight viewmodel: no downloaded assets are needed for the first rifle.
 const weapon = new THREE.Group();
+const fallbackWeapon = new THREE.Group();
+weapon.add(fallbackWeapon);
 const weaponBody = new THREE.MeshStandardMaterial({ color: '#202832', roughness: 0.45, metalness: 0.7 });
 const weaponAccent = new THREE.MeshStandardMaterial({ color: '#2563eb', emissive: '#2563eb', emissiveIntensity: 0.8, metalness: 0.5 });
 function weaponPart(size, position, material = weaponBody) {
   const part = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
-  part.position.set(...position); weapon.add(part); return part;
+  part.position.set(...position); fallbackWeapon.add(part); return part;
 }
 weaponPart([0.19, 0.15, 0.6], [0.16, -0.1, -0.38]);
 weaponPart([0.07, 0.07, 0.65], [0.16, -0.05, -0.97]);
@@ -121,6 +124,23 @@ weaponPart([0.09, 0.07, 0.28], [0.16, 0.04, -0.24], weaponAccent);
 const muzzleFlash = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.28, 6), new THREE.MeshBasicMaterial({ color: '#fff1a8' }));
 muzzleFlash.rotation.x = -Math.PI / 2; muzzleFlash.position.set(0.16, -0.05, -1.34); muzzleFlash.visible = false; weapon.add(muzzleFlash);
 weapon.position.set(0.42, -0.34, -0.58); weapon.rotation.set(-0.08, -0.16, 0); camera.add(weapon);
+
+const weaponModel = new THREE.Group();
+weaponModel.visible = false;
+weapon.add(weaponModel);
+new GLTFLoader().load('/assets/weapons/near_future_assault_rifle.glb', (gltf) => {
+  const rifle = gltf.scene;
+  // The source model's long axis is Y; rotate it into the FPS forward (-Z) axis.
+  rifle.rotation.x = -Math.PI / 2;
+  rifle.scale.setScalar(0.23);
+  rifle.position.set(0.18, -0.13, -0.73);
+  rifle.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.frustumCulled = false; } });
+  weaponModel.add(rifle);
+  weaponModel.visible = true;
+  fallbackWeapon.visible = false;
+}, undefined, () => {
+  console.warn('Custom rifle model could not be loaded; using the built-in fallback.');
+});
 
 const raycaster = new THREE.Raycaster();
 const normalMatrix = new THREE.Matrix3();
