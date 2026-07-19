@@ -174,6 +174,12 @@ const speedReadout = document.querySelector("#movement-readout strong");
 const ammoCount = document.querySelector("#ammo-count");
 const reloadStatus = document.querySelector("#reload-status");
 const networkStatus = document.querySelector("#network-status");
+const healthCount = document.querySelector('#health-count');
+const matchTimer = document.querySelector('#match-timer');
+const killFeed = document.querySelector('#kill-feed');
+const matchResult = document.querySelector('#match-result');
+const winnerName = document.querySelector('#winner-name');
+const playAgainButton = document.querySelector('#play-again-button');
 const lobby = document.querySelector('#lobby-screen');
 const lobbyStatus = document.querySelector('#lobby-status');
 const nicknameInput = document.querySelector('#nickname-input');
@@ -185,6 +191,7 @@ const joinRoomButton = document.querySelector('#join-room-button');
 const remotePlayers = new Map();
 let multiplayerRoom;
 let lastNetworkSync = 0;
+let localAlive = true;
 
 function createRemotePlayer(nickname) {
   const avatar = new THREE.Group();
@@ -201,6 +208,32 @@ function createRemotePlayer(nickname) {
   avatar.userData.nickname = nickname;
   scene.add(avatar);
   return avatar;
+}
+
+function updateCombatHud() {
+  if (!multiplayerRoom?.state) return;
+  const state = multiplayerRoom.state;
+  const local = state.players.get(multiplayerRoom.sessionId);
+  if (local) {
+    const justRespawned = !localAlive && local.alive;
+    localAlive = local.alive;
+    healthCount.textContent = local.alive ? local.health : `R${local.respawnSeconds}`;
+    if (justRespawned) {
+      player.position.set(local.x, local.y, local.z);
+      playerVelocity.set(0, 0, 0); horizontalVelocity.set(0, 0, 0);
+    }
+  }
+  const minutes = Math.floor(Math.max(0, state.matchTime || 0) / 60);
+  const seconds = Math.max(0, state.matchTime || 0) % 60;
+  matchTimer.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  if (state.status === 'FINISHED') { winnerName.textContent = state.winner || 'NO WINNER'; matchResult.hidden = false; }
+}
+
+function addKillFeed(message) {
+  const item = document.createElement('p');
+  item.innerHTML = `<b>${message.killer}</b> <i>${message.headshot ? 'HEADSHOT' : 'ELIMINATED'}</i> ${message.victim}`;
+  killFeed.prepend(item);
+  window.setTimeout(() => item.remove(), 4500);
 }
 
 async function connectToMatch(options = {}) {
@@ -220,15 +253,22 @@ async function connectToMatch(options = {}) {
     networkStatus.textContent = `ONLINE // ${room.roomId.slice(0, 5).toUpperCase()}`;
     const $ = getStateCallbacks(room);
     $(room.state).players.onAdd((remote, sessionId) => {
-      if (sessionId === room.sessionId) return;
+      if (sessionId === room.sessionId) {
+        $(remote).onChange(() => updateCombatHud());
+        updateCombatHud();
+        return;
+      }
       const avatar = createRemotePlayer(remote.nickname);
+      avatar.userData.sessionId = sessionId;
       remotePlayers.set(sessionId, avatar);
       $(remote).onChange(() => {
         avatar.userData.target.set(remote.x, remote.y, remote.z);
         avatar.userData.rotation = remote.rotation;
+        avatar.visible = remote.alive;
       });
       avatar.userData.target.set(remote.x, remote.y, remote.z);
       avatar.userData.rotation = remote.rotation;
+      avatar.visible = remote.alive;
     }, true);
     $(room.state).players.onRemove((remote, sessionId) => {
       const avatar = remotePlayers.get(sessionId);
@@ -240,6 +280,8 @@ async function connectToMatch(options = {}) {
       remotePlayers.forEach((avatar) => scene.remove(avatar));
       remotePlayers.clear();
     });
+    room.onMessage('kill', addKillFeed);
+    room.onMessage('match-ended', ({ winner }) => { winnerName.textContent = winner; matchResult.hidden = false; });
     // For newly created private rooms, use the requested code immediately.
     // State hydration can lag the join response by one network tick.
     const roomLabel = options.roomCode || room.state.roomCode;
@@ -288,6 +330,7 @@ function updateRemotePlayers(delta) {
     avatar.rotation.y = THREE.MathUtils.damp(avatar.rotation.y, avatar.userData.rotation, 14, delta);
   });
 }
+playAgainButton.addEventListener('click', () => { matchResult.hidden = true; });
 
 // An intentionally lightweight viewmodel: no downloaded assets are needed for the first rifle.
 const weapon = new THREE.Group();
@@ -434,7 +477,7 @@ function addDecal(hit) {
   if (decals.length > 28) scene.remove(decals.shift().mesh);
 }
 function fire(now) {
-  if (!locked || reloading || now - lastShotAt < 92) return;
+  if (!locked || !localAlive || reloading || now - lastShotAt < 92) return;
   if (magazine === 0) {
     startReload(now);
     return;
@@ -454,6 +497,18 @@ function fire(now) {
   camera.updateMatrixWorld();
   raycaster.setFromCamera(new THREE.Vector2(), camera);
   const hit = raycaster.intersectObjects(shootables, false)[0];
+  const playerHit = raycaster.intersectObjects([...remotePlayers.values()], true)[0];
+  if (playerHit && (!hit || playerHit.distance < hit.distance)) {
+    let owner = playerHit.object;
+    while (owner && !owner.userData.sessionId) owner = owner.parent;
+    if (owner?.userData.sessionId) {
+      multiplayerRoom?.send('shoot', {
+        targetId: owner.userData.sessionId,
+        headshot: playerHit.point.y - owner.position.y > 1.15,
+      });
+      return;
+    }
+  }
   if (!hit) return;
   addDecal(hit);
   if (hit.object.userData.isTarget) hit.object.userData.hitUntil = now + 110;
@@ -639,6 +694,7 @@ function animate() {
   updateWeapon(now, delta);
   syncMultiplayer(now);
   updateRemotePlayers(delta);
+  updateCombatHud();
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }

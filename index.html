@@ -35,8 +35,12 @@
       </section>
       <div class="hud-corner" aria-hidden="true"><i></i><span id="network-status">CONNECTING // TRAINING</span></div>
       <div class="movement-readout" id="movement-readout" aria-hidden="true">SPD <strong>0.0</strong></div>
+      <div class="combat-hud"><strong id="health-count">100</strong><small>HP</small></div>
+      <div class="match-timer" id="match-timer">05:00</div>
+      <div class="kill-feed" id="kill-feed" aria-live="polite"></div>
       <div class="crosshair" aria-hidden="true"><i></i><b></b><em></em><span></span></div>
       <div class="weapon-hud" aria-live="polite"><small>AR-01 / AUTO</small><strong id="ammo-count">30 <i>/</i> 90</strong><span id="reload-status"></span></div>
+      <section class="match-result" id="match-result" hidden><p>MATCH COMPLETE</p><h2 id="winner-name">WINNER</h2><button id="play-again-button" type="button">PLAY AGAIN</button></section>
     </main>
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -14,10 +14,16 @@ class PlayerState extends Schema {
     this.z = 0;
     this.rotation = 0;
     this.pitch = 0;
+    this.health = 100;
+    this.kills = 0;
+    this.deaths = 0;
+    this.alive = true;
+    this.respawnSeconds = 0;
   }
 }
 defineTypes(PlayerState, {
   nickname: 'string', x: 'number', y: 'number', z: 'number', rotation: 'number', pitch: 'number',
+  health: 'number', kills: 'number', deaths: 'number', alive: 'boolean', respawnSeconds: 'number',
 });
 
 class GameState extends Schema {
@@ -27,10 +33,12 @@ class GameState extends Schema {
     this.roomCode = '';
     this.status = 'WAITING';
     this.countdown = 10;
+    this.matchTime = 300;
+    this.winner = '';
   }
 }
 defineTypes(GameState, {
-  players: { map: PlayerState }, roomCode: 'string', status: 'string', countdown: 'number',
+  players: { map: PlayerState }, roomCode: 'string', status: 'string', countdown: 'number', matchTime: 'number', winner: 'string',
 });
 
 export class GameRoom extends Room {
@@ -43,6 +51,7 @@ export class GameRoom extends Room {
     this.state.roomCode = this.roomCode;
     this.setMetadata({ roomCode: this.roomCode, isPrivate: this.isPrivate, maxPlayers: this.maxClients });
     this.onMessage('move', (client, movement) => this.updatePlayer(client, movement));
+    this.onMessage('shoot', (client, shot) => this.applyShot(client, shot));
     this.onMessage('rename', (client, nickname) => {
       const player = this.state.players.get(client.sessionId);
       if (player) player.nickname = this.sanitizeNickname(nickname);
@@ -51,10 +60,9 @@ export class GameRoom extends Room {
   }
 
   onJoin(client, options) {
-    const [x, z] = SPAWN_POINTS[this.clients.length % SPAWN_POINTS.length];
     const player = new PlayerState();
     player.nickname = this.sanitizeNickname(options?.nickname);
-    player.x = x; player.z = z;
+    this.spawnPlayer(player);
     this.state.players.set(client.sessionId, player);
   }
 
@@ -63,7 +71,13 @@ export class GameRoom extends Room {
   }
 
   updateMatchCountdown() {
-    if (this.state.status === 'LIVE') return;
+    if (this.state.status === 'LIVE') {
+      this.state.matchTime -= 1;
+      this.updateRespawns();
+      if (this.state.matchTime <= 0) this.finishMatch();
+      return;
+    }
+    if (this.state.status === 'FINISHED') return;
     if (this.clients.length < 2) {
       this.state.status = 'WAITING';
       this.state.countdown = 10;
@@ -74,18 +88,60 @@ export class GameRoom extends Room {
     if (this.state.countdown <= 0) {
       this.state.status = 'LIVE';
       this.state.countdown = 0;
+      this.state.matchTime = 300;
     }
   }
 
   updatePlayer(client, movement) {
     const player = this.state.players.get(client.sessionId);
-    if (!player || !movement) return;
+    if (!player || !player.alive || !movement) return;
     // Phase 4 accepts client movement, but bounds it to the playable arena.
     if (Number.isFinite(movement.x)) player.x = Math.max(-14, Math.min(14, movement.x));
     if (Number.isFinite(movement.y)) player.y = Math.max(0, Math.min(8, movement.y));
     if (Number.isFinite(movement.z)) player.z = Math.max(-11, Math.min(11, movement.z));
     if (Number.isFinite(movement.rotation)) player.rotation = movement.rotation;
     if (Number.isFinite(movement.pitch)) player.pitch = Math.max(-1.42, Math.min(1.42, movement.pitch));
+  }
+
+  applyShot(client, shot) {
+    if (this.state.status !== 'LIVE' || !shot?.targetId || shot.targetId === client.sessionId) return;
+    const attacker = this.state.players.get(client.sessionId);
+    const target = this.state.players.get(shot.targetId);
+    const now = Date.now();
+    if (!attacker?.alive || !target?.alive || now - (client.userData?.lastShotAt || 0) < 80) return;
+    if (!client.userData) client.userData = {};
+    client.userData.lastShotAt = now;
+    const distance = Math.hypot(attacker.x - target.x, attacker.y - target.y, attacker.z - target.z);
+    if (distance > 36) return;
+    target.health = Math.max(0, target.health - (shot.headshot ? 100 : 34));
+    if (target.health === 0) {
+      target.alive = false; target.deaths += 1; target.respawnSeconds = 3;
+      attacker.kills += 1;
+      this.broadcast('kill', { killer: attacker.nickname, victim: target.nickname, headshot: Boolean(shot.headshot) });
+    }
+  }
+
+  updateRespawns() {
+    this.state.players.forEach((player) => {
+      if (!player.alive && player.respawnSeconds > 0) {
+        player.respawnSeconds -= 1;
+        if (player.respawnSeconds === 0) this.spawnPlayer(player);
+      }
+    });
+  }
+
+  spawnPlayer(player) {
+    const [x, z] = SPAWN_POINTS[Math.floor(Math.random() * SPAWN_POINTS.length)];
+    player.x = x; player.y = 0; player.z = z; player.health = 100; player.alive = true; player.respawnSeconds = 0;
+  }
+
+  finishMatch() {
+    let winner = null;
+    this.state.players.forEach((player) => { if (!winner || player.kills > winner.kills) winner = player; });
+    this.state.status = 'FINISHED';
+    this.state.matchTime = 0;
+    this.state.winner = winner?.nickname || 'NO WINNER';
+    this.broadcast('match-ended', { winner: this.state.winner });
   }
 
   sanitizeNickname(value) {
