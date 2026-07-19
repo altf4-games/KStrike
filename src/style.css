@@ -25,4 +25,5 @@ button:hover { background: #3574ef; transform: translateY(-2px); } button span {
 .hint { margin-top: 22px; font-size: .56rem; } .hint small { color: #5f6a76; font-size: inherit; }
 .hud-corner { position: fixed; bottom: 27px; right: 31px; z-index: 1; display: flex; gap: 8px; align-items: center; font: 500 .55rem 'JetBrains Mono', monospace; letter-spacing: .11em; color: #b9c4d1; }
 .hud-corner i { width: 7px; height: 7px; background: #22c55e; border-radius: 50%; box-shadow: 0 0 12px #22c55e; }
+.movement-readout { position: fixed; bottom: 27px; left: 31px; z-index: 1; font: 500 .6rem 'JetBrains Mono', monospace; letter-spacing: .12em; color: #94a3b8; } .movement-readout strong { color: #f8fafc; }
 @media (max-width: 600px) { .intro { justify-content: flex-end; padding-bottom: 4rem; background: linear-gradient(0deg, rgba(15,17,21,.92), rgba(15,17,21,.25)); } .hud-corner { bottom: 16px; right: 16px; } }
