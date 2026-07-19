@@ -239,10 +239,12 @@ function buildD2Arena() {
 
 function showD2MapModel() {
   if (!d2MapLoaded || !d2MapModel) return;
-  // Keep the lightweight blockout collider mesh active, but render the supplied D2 asset.
+  // The lightweight blockout is only a load fallback. Raycasts must target the visible map.
   arenaGroup.children.forEach((child) => { if (child !== targetGroup) child.visible = false; });
   arenaGroup.add(d2MapModel);
   d2MapModel.visible = true;
+  shootables.length = 0;
+  d2MapModel.traverse((node) => { if (node.isMesh) shootables.push(node); });
 }
 
 function loadD2MapModel() {
