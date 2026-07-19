@@ -24,20 +24,30 @@ class GameState extends Schema {
   constructor() {
     super();
     this.players = new MapSchema();
+    this.roomCode = '';
+    this.status = 'WAITING';
+    this.countdown = 10;
   }
 }
-defineTypes(GameState, { players: { map: PlayerState } });
+defineTypes(GameState, {
+  players: { map: PlayerState }, roomCode: 'string', status: 'string', countdown: 'number',
+});
 
 export class GameRoom extends Room {
-  onCreate() {
-    this.maxClients = 10;
+  onCreate(options = {}) {
+    this.maxClients = Math.max(2, Math.min(10, Number(options.maxPlayers) || 10));
+    this.roomCode = String(options.roomCode || '').toUpperCase().slice(0, 6);
+    this.isPrivate = Boolean(options.isPrivate);
     this.patchRate = 50;
     this.setState(new GameState());
+    this.state.roomCode = this.roomCode;
+    this.setMetadata({ roomCode: this.roomCode, isPrivate: this.isPrivate, maxPlayers: this.maxClients });
     this.onMessage('move', (client, movement) => this.updatePlayer(client, movement));
     this.onMessage('rename', (client, nickname) => {
       const player = this.state.players.get(client.sessionId);
       if (player) player.nickname = this.sanitizeNickname(nickname);
     });
+    this.clock.setInterval(() => this.updateMatchCountdown(), 1000);
   }
 
   onJoin(client, options) {
@@ -50,6 +60,21 @@ export class GameRoom extends Room {
 
   onLeave(client) {
     this.state.players.delete(client.sessionId);
+  }
+
+  updateMatchCountdown() {
+    if (this.state.status === 'LIVE') return;
+    if (this.clients.length < 2) {
+      this.state.status = 'WAITING';
+      this.state.countdown = 10;
+      return;
+    }
+    this.state.status = 'STARTING';
+    this.state.countdown -= 1;
+    if (this.state.countdown <= 0) {
+      this.state.status = 'LIVE';
+      this.state.countdown = 0;
+    }
   }
 
   updatePlayer(client, movement) {

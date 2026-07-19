@@ -174,6 +174,13 @@ const speedReadout = document.querySelector("#movement-readout strong");
 const ammoCount = document.querySelector("#ammo-count");
 const reloadStatus = document.querySelector("#reload-status");
 const networkStatus = document.querySelector("#network-status");
+const lobby = document.querySelector('#lobby-screen');
+const lobbyStatus = document.querySelector('#lobby-status');
+const nicknameInput = document.querySelector('#nickname-input');
+const roomCodeInput = document.querySelector('#room-code-input');
+const quickMatchButton = document.querySelector('#quick-match-button');
+const createRoomButton = document.querySelector('#create-room-button');
+const joinRoomButton = document.querySelector('#join-room-button');
 
 const remotePlayers = new Map();
 let multiplayerRoom;
@@ -196,15 +203,19 @@ function createRemotePlayer(nickname) {
   return avatar;
 }
 
-function connectToMatch() {
-  if (multiplayerRoom) return;
+async function connectToMatch(options = {}) {
+  if (multiplayerRoom) return multiplayerRoom;
   const savedNickname = localStorage.getItem('kstrike-nickname');
-  const nickname = savedNickname || `Player-${Math.floor(1000 + Math.random() * 9000)}`;
+  const nickname = nicknameInput.value.trim() || savedNickname || `Player-${Math.floor(1000 + Math.random() * 9000)}`;
   localStorage.setItem('kstrike-nickname', nickname);
+  nicknameInput.value = nickname;
   const endpoint = import.meta.env.VITE_COLYSEUS_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:2567`;
   const client = new Client(endpoint);
   networkStatus.textContent = 'CONNECTING // TRAINING';
-  client.joinOrCreate('deathmatch', { nickname }).then((room) => {
+  lobbyStatus.textContent = 'CONNECTING TO MATCH SERVER...';
+  const roomOptions = { nickname, isPrivate: Boolean(options.isPrivate), roomCode: options.roomCode || '', maxPlayers: options.maxPlayers || 10 };
+  try {
+    const room = await (options.create ? client.create('deathmatch', roomOptions) : options.join ? client.join('deathmatch', roomOptions) : client.joinOrCreate('deathmatch', roomOptions));
     multiplayerRoom = room;
     networkStatus.textContent = `ONLINE // ${room.roomId.slice(0, 5).toUpperCase()}`;
     const $ = getStateCallbacks(room);
@@ -229,8 +240,38 @@ function connectToMatch() {
       remotePlayers.forEach((avatar) => scene.remove(avatar));
       remotePlayers.clear();
     });
-  }).catch(() => { networkStatus.textContent = 'OFFLINE // TRAINING'; });
+    // For newly created private rooms, use the requested code immediately.
+    // State hydration can lag the join response by one network tick.
+    const roomLabel = options.roomCode || room.state.roomCode;
+    intro.querySelector('.eyebrow').textContent = roomLabel
+      ? `PRIVATE ROOM CODE // ${roomLabel}`
+      : `PUBLIC MATCH // ${room.roomId.slice(0, 6).toUpperCase()}`;
+    intro.querySelector('.intro__copy').innerHTML = 'Room joined. Enter when you are ready.<br />Waiting players will appear in the arena.';
+    enterButton.innerHTML = 'ENTER ARENA <span>&gt;</span>';
+    lobby.hidden = true;
+    intro.hidden = false;
+    return room;
+  } catch (error) {
+    networkStatus.textContent = 'OFFLINE // TRAINING';
+    const detail = error?.message || 'CONNECTION FAILED';
+    lobbyStatus.textContent = `JOIN FAILED // ${detail.toUpperCase()}`;
+    console.error('KStrike room join failed:', error);
+    throw error;
+  }
 }
+
+function generateRoomCode() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
+quickMatchButton.addEventListener('click', () => connectToMatch().catch(() => {}));
+createRoomButton.addEventListener('click', () => {
+  const roomCode = generateRoomCode();
+  roomCodeInput.value = roomCode;
+  connectToMatch({ create: true, isPrivate: true, roomCode, maxPlayers: 10 }).catch(() => {});
+});
+joinRoomButton.addEventListener('click', () => {
+  const roomCode = roomCodeInput.value.trim().toUpperCase();
+  if (!roomCode) { lobbyStatus.textContent = 'ENTER A ROOM CODE'; return; }
+  connectToMatch({ join: true, isPrivate: true, roomCode }).catch(() => {});
+});
 
 function syncMultiplayer(now) {
   if (!multiplayerRoom || now - lastNetworkSync < 50) return;
@@ -611,5 +652,6 @@ window.addEventListener("resize", () => {
 
 window.setTimeout(() => {
   document.querySelector("#loading-screen").classList.add("loading--done");
-  document.querySelector("#intro-screen").hidden = false;
+  nicknameInput.value = localStorage.getItem('kstrike-nickname') || '';
+  lobby.hidden = false;
 }, 700);
