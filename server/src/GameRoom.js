@@ -46,12 +46,10 @@ export class GameRoom extends Room {
     player.nickname = this.sanitizeNickname(options?.nickname);
     player.x = x; player.z = z;
     this.state.players.set(client.sessionId, player);
-    this.broadcast('player-joined', { sessionId: client.sessionId, nickname: player.nickname }, { except: client });
   }
 
   onLeave(client) {
     this.state.players.delete(client.sessionId);
-    this.broadcast('player-left', { sessionId: client.sessionId });
   }
 
   updatePlayer(client, movement) {

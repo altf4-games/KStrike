@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { Client } from "colyseus.js";
+import { Client, getStateCallbacks } from "colyseus.js";
 import "./style.css";
 
 const canvas = document.querySelector("#game-canvas");
@@ -207,18 +207,19 @@ function connectToMatch() {
   client.joinOrCreate('deathmatch', { nickname }).then((room) => {
     multiplayerRoom = room;
     networkStatus.textContent = `ONLINE // ${room.roomId.slice(0, 5).toUpperCase()}`;
-    room.state.players.onAdd((remote, sessionId) => {
+    const $ = getStateCallbacks(room);
+    $(room.state).players.onAdd((remote, sessionId) => {
       if (sessionId === room.sessionId) return;
       const avatar = createRemotePlayer(remote.nickname);
       remotePlayers.set(sessionId, avatar);
-      remote.onChange(() => {
+      $(remote).onChange(() => {
         avatar.userData.target.set(remote.x, remote.y, remote.z);
         avatar.userData.rotation = remote.rotation;
       });
       avatar.userData.target.set(remote.x, remote.y, remote.z);
       avatar.userData.rotation = remote.rotation;
-    });
-    room.state.players.onRemove((remote, sessionId) => {
+    }, true);
+    $(room.state).players.onRemove((remote, sessionId) => {
       const avatar = remotePlayers.get(sessionId);
       if (avatar) { scene.remove(avatar); remotePlayers.delete(sessionId); }
     });
@@ -469,18 +470,15 @@ function moveWithCollision(delta) {
 }
 
 function movePlayer(delta) {
-  if (!locked) {
-    speedReadout.textContent = "0.0";
-    return;
-  }
   direction.set(0, 0, 0);
-  if (keys.has("KeyW")) direction.z -= 1;
-  if (keys.has("KeyS")) direction.z += 1;
-  if (keys.has("KeyA")) direction.x -= 1;
-  if (keys.has("KeyD")) direction.x += 1;
+  if (locked && keys.has("KeyW")) direction.z -= 1;
+  if (locked && keys.has("KeyS")) direction.z += 1;
+  if (locked && keys.has("KeyA")) direction.x -= 1;
+  if (locked && keys.has("KeyD")) direction.x += 1;
   const hasInput = direction.lengthSq() > 0;
-  crouching =
-    keys.has("ControlLeft") || keys.has("ControlRight") || keys.has("KeyC");
+  crouching = locked && (
+    keys.has("ControlLeft") || keys.has("ControlRight") || keys.has("KeyC")
+  );
   const sprinting =
     !crouching && (keys.has("ShiftLeft") || keys.has("ShiftRight"));
   let targetSpeed = crouching
@@ -507,7 +505,7 @@ function movePlayer(delta) {
     delta,
   );
   moveWithCollision(delta);
-  if (grounded && keys.has("Space") && !crouching) {
+  if (locked && grounded && keys.has("Space") && !crouching) {
     playerVelocity.y = jumpVelocity;
     grounded = false;
   }
