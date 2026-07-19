@@ -246,7 +246,7 @@ function createRemotePlayer(nickname) {
 }
 
 function updateCombatHud() {
-  if (!multiplayerRoom?.state) return;
+  if (!multiplayerRoom?.state?.players) return;
   const state = multiplayerRoom.state;
   const local = state.players.get(multiplayerRoom.sessionId);
   if (local) {
@@ -271,6 +271,7 @@ function updateCombatHud() {
 }
 
 function showMatchResult(winner) {
+  if (!multiplayerRoom?.state?.players) return;
   winnerName.textContent = winner || 'NO WINNER';
   const players = [...multiplayerRoom.state.players.values()].sort((a, b) => b.kills - a.kills);
   resultScores.innerHTML = players.map((remote, index) => `<p><span>${index + 1}. ${remote.nickname}</span><b>${remote.kills} K / ${remote.deaths} D</b></p>`).join('');
@@ -289,7 +290,7 @@ function addKillFeed(message) {
 }
 
 function renderScoreboard() {
-  if (!multiplayerRoom?.state) return;
+  if (!multiplayerRoom?.state?.players) return;
   const rows = [...multiplayerRoom.state.players.entries()]
     .sort(([, a], [, b]) => b.kills - a.kills)
     .map(([sessionId, remote]) => `<div class="scoreboard__row${sessionId === multiplayerRoom.sessionId ? ' scoreboard__row--self' : ''}"><span>${remote.nickname}</span><span>${remote.kills}</span><span>${remote.deaths}</span><span>${remote.alive ? remote.health : 'RESPAWN'}</span></div>`)
@@ -323,28 +324,38 @@ async function startMatchConnection(options = {}) {
     multiplayerRoom = room;
     networkStatus.textContent = `ONLINE // ${room.roomId.slice(0, 5).toUpperCase()}`;
     const $ = getStateCallbacks(room);
-    $(room.state).players.onAdd((remote, sessionId) => {
-      if (sessionId === room.sessionId) {
-        $(remote).onChange(() => updateCombatHud());
-        updateCombatHud();
-        return;
-      }
-      const avatar = createRemotePlayer(remote.nickname);
-      avatar.userData.sessionId = sessionId;
-      remotePlayers.set(sessionId, avatar);
-      $(remote).onChange(() => {
+    let playerCallbacksBound = false;
+    const bindPlayerCallbacks = () => {
+      if (playerCallbacksBound || !room.state?.players) return;
+      playerCallbacksBound = true;
+      $(room.state).players.onAdd((remote, sessionId) => {
+        if (sessionId === room.sessionId) {
+          $(remote).onChange(() => updateCombatHud());
+          updateCombatHud();
+          return;
+        }
+        const avatar = createRemotePlayer(remote.nickname);
+        avatar.userData.sessionId = sessionId;
+        remotePlayers.set(sessionId, avatar);
+        $(remote).onChange(() => {
+          avatar.userData.target.set(remote.x, remote.y, remote.z);
+          avatar.userData.rotation = remote.rotation;
+          avatar.visible = remote.alive;
+        });
         avatar.userData.target.set(remote.x, remote.y, remote.z);
         avatar.userData.rotation = remote.rotation;
         avatar.visible = remote.alive;
+      }, true);
+      $(room.state).players.onRemove((remote, sessionId) => {
+        const avatar = remotePlayers.get(sessionId);
+        if (avatar) { scene.remove(avatar); remotePlayers.delete(sessionId); }
       });
-      avatar.userData.target.set(remote.x, remote.y, remote.z);
-      avatar.userData.rotation = remote.rotation;
-      avatar.visible = remote.alive;
-    }, true);
-    $(room.state).players.onRemove((remote, sessionId) => {
-      const avatar = remotePlayers.get(sessionId);
-      if (avatar) { scene.remove(avatar); remotePlayers.delete(sessionId); }
+    };
+    room.onStateChange(() => {
+      bindPlayerCallbacks();
+      updateCombatHud();
     });
+    bindPlayerCallbacks();
     room.onLeave(() => {
       multiplayerRoom = undefined;
       networkStatus.textContent = 'OFFLINE // TRAINING';
@@ -367,7 +378,7 @@ async function startMatchConnection(options = {}) {
     });
     // For newly created private rooms, use the requested code immediately.
     // State hydration can lag the join response by one network tick.
-    const roomLabel = options.roomCode || room.state.roomCode;
+    const roomLabel = options.roomCode || room.state?.roomCode;
     roomOverlay.textContent = roomLabel ? `ROOM // ${roomLabel}` : `ROOM // ${room.roomId.slice(0, 6).toUpperCase()}`;
     scoreboardRoom.textContent = roomOverlay.textContent;
     intro.querySelector('.eyebrow').textContent = roomLabel
