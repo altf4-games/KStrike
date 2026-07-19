@@ -20,7 +20,7 @@
         <h1>DESERT<br /><em>DISTRICT</em></h1>
         <p class="intro__copy">A fast, lightweight browser FPS.<br />D2 deathmatch is online.</p>
         <button id="enter-button" type="button">ENTER ARENA <span>↗</span></button>
-        <p class="hint">MOUSE TO LOOK &nbsp;·&nbsp; WASD TO MOVE &nbsp;·&nbsp; SHIFT TO SPRINT &nbsp;·&nbsp; CTRL TO CROUCH</p>
+        <p class="hint">MOUSE TO LOOK &nbsp;·&nbsp; WASD TO MOVE &nbsp;·&nbsp; SHIFT TO SPRINT &nbsp;·&nbsp; CTRL TO CROUCH<br />TAB FOR LEADERBOARD &nbsp;·&nbsp; 1 / 2 TO SWITCH WEAPONS</p>
         <button id="exit-match-button" class="button--secondary intro__exit" type="button" hidden>EXIT TO MAIN MENU</button>
       </section>
       <section class="lobby" id="lobby-screen" hidden>
@@ -50,7 +50,7 @@
       <div class="kill-streak" id="kill-streak" aria-live="polite"></div>
       <section class="scoreboard" id="scoreboard" hidden><header><span>DEATHMATCH</span><strong id="scoreboard-room">ROOM // LOCAL</strong><small>HOLD TAB</small></header><div id="scoreboard-players"></div></section>
       <div class="crosshair" aria-hidden="true"><i></i><b></b><em></em><span></span></div>
-      <div class="weapon-hud" aria-live="polite"><small>AR-01 / AUTO</small><strong id="ammo-count">30 <i>/</i> 90</strong><span id="reload-status"></span></div>
+      <div class="weapon-hud" aria-live="polite"><small id="weapon-name">AR-01 / AUTO</small><strong id="ammo-count">30 <i>/</i> 90</strong><span id="reload-status"></span></div>
       <section class="match-result" id="match-result" hidden><p>MATCH COMPLETE</p><h2 id="winner-name">WINNER</h2><div id="result-scores" class="result-scores"></div><button id="play-again-button" type="button">PLAY AGAIN</button></section>
     </main>
     <script type="module" src="/src/main.js"></script>

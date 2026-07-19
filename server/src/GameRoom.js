@@ -3,9 +3,10 @@ import { Schema, MapSchema, defineTypes } from '@colyseus/schema';
 
 const SPAWN_POINTS = {
   d2: [
-    [23, 19], [2, 10], [-21, 11], [21, -20], [-26, -18],
-    [-11, 7], [11, 5], [-7, -9], [8, -7], [-20, 1], [20, 0],
-    [-28, -10], [27, -4], [-4, 18], [15, 12],
+    // Kept deliberately small: these are the stable, central walkable areas
+    // verified against the imported D2 mesh rather than decorative geometry.
+    // x, floor y, z — sampled from the imported D2 collision mesh.
+    [-35, 4.95, -30], [0, 1.65, -25], [35, 4.95, 5], [10, 4.95, -8],
   ],
   training: [[12, 10], [-12, 9], [0, 6], [-11, -8], [11, -8], [0, -3]],
 };
@@ -20,6 +21,7 @@ class PlayerState extends Schema {
     this.rotation = 0;
     this.pitch = 0;
     this.action = 'idle';
+    this.weapon = 'rifle';
     this.health = 100;
     this.kills = 0;
     this.deaths = 0;
@@ -28,7 +30,7 @@ class PlayerState extends Schema {
   }
 }
 defineTypes(PlayerState, {
-  nickname: 'string', x: 'number', y: 'number', z: 'number', rotation: 'number', pitch: 'number', action: 'string',
+  nickname: 'string', x: 'number', y: 'number', z: 'number', rotation: 'number', pitch: 'number', action: 'string', weapon: 'string',
   health: 'number', kills: 'number', deaths: 'number', alive: 'boolean', respawnSeconds: 'number',
 });
 
@@ -54,12 +56,14 @@ export class GameRoom extends Room {
     this.roomCode = String(options.roomCode || '').toUpperCase().slice(0, 6);
     this.mapId = options.mapId === 'training' ? 'training' : 'd2';
     this.isPrivate = Boolean(options.isPrivate);
+    this.spawnIndex = 0;
     this.patchRate = 50;
     this.setState(new GameState());
     this.state.roomCode = this.roomCode;
     this.state.mapId = this.mapId;
     this.setMetadata({ roomCode: this.roomCode, mapId: this.mapId, isPrivate: this.isPrivate, maxPlayers: this.maxClients });
     this.onMessage('move', (client, movement) => this.updatePlayer(client, movement));
+    this.onMessage('void', (client) => this.recoverPlayer(client));
     this.onMessage('shoot', (client, shot) => this.applyShot(client, shot));
     this.onMessage('fire', (client) => this.broadcastFire(client));
     this.onMessage('rename', (client, nickname) => {
@@ -123,25 +127,49 @@ export class GameRoom extends Room {
     if (Number.isFinite(movement.rotation)) player.rotation = movement.rotation;
     if (Number.isFinite(movement.pitch)) player.pitch = Math.max(-1.42, Math.min(1.42, movement.pitch));
     if (['idle', 'walk', 'run', 'crouch', 'jump', 'fire', 'reload'].includes(movement.action)) player.action = movement.action;
+    if (movement.weapon === 'rifle' || movement.weapon === 'shotgun') player.weapon = movement.weapon;
+  }
+
+  recoverPlayer(client) {
+    const player = this.state.players.get(client.sessionId);
+    const now = Date.now();
+    if (!player?.alive || now - (client.userData?.lastVoidRecoveryAt || 0) < 1000) return;
+    if (!client.userData) client.userData = {};
+    client.userData.lastVoidRecoveryAt = now;
+    this.spawnPlayer(player);
+    this.send(client, 'recovered', { x: player.x, y: player.y, z: player.z });
   }
 
   applyShot(client, shot) {
-    if (this.state.status !== 'LIVE' || !shot?.targetId || shot.targetId === client.sessionId) return;
+    if (this.state.status !== 'LIVE' || !shot) return;
     const attacker = this.state.players.get(client.sessionId);
-    const target = this.state.players.get(shot.targetId);
+    const weapon = shot.weapon === 'shotgun' ? 'shotgun' : 'rifle';
+    const impacts = Array.isArray(shot.impacts)
+      ? shot.impacts.slice(0, weapon === 'shotgun' ? 8 : 1)
+      : shot.targetId ? [{ targetId: shot.targetId, headshot: shot.headshot }] : [];
     const now = Date.now();
-    if (!attacker?.alive || !target?.alive || now - (client.userData?.lastShotAt || 0) < 80) return;
+    const fireDelay = weapon === 'shotgun' ? 400 : 80;
+    if (!attacker?.alive || !impacts.length || now - (client.userData?.lastShotAt || 0) < fireDelay) return;
     if (!client.userData) client.userData = {};
     client.userData.lastShotAt = now;
-    const distance = Math.hypot(attacker.x - target.x, attacker.y - target.y, attacker.z - target.z);
-    if (distance > 36) return;
-    target.health = Math.max(0, target.health - (shot.headshot ? 100 : 34));
-    this.send(client, 'hit', { headshot: Boolean(shot.headshot) });
-    if (target.health === 0) {
-      target.alive = false; target.action = 'idle'; target.deaths += 1; target.respawnSeconds = 3;
-      attacker.kills += 1;
-      this.broadcast('kill', { killer: attacker.nickname, killerId: client.sessionId, victim: target.nickname, headshot: Boolean(shot.headshot) });
+    let confirmedHit = false;
+    for (const impact of impacts) {
+      if (!impact?.targetId || impact.targetId === client.sessionId) continue;
+      const target = this.state.players.get(impact.targetId);
+      if (!target?.alive) continue;
+      const distance = Math.hypot(attacker.x - target.x, attacker.y - target.y, attacker.z - target.z);
+      if (distance > 36) continue;
+      const headshot = Boolean(impact.headshot);
+      const damage = weapon === 'shotgun' ? (headshot ? 24 : 15) : (headshot ? 100 : 34);
+      target.health = Math.max(0, target.health - damage);
+      confirmedHit = true;
+      if (target.health === 0) {
+        target.alive = false; target.action = 'idle'; target.deaths += 1; target.respawnSeconds = 3;
+        attacker.kills += 1;
+        this.broadcast('kill', { killer: attacker.nickname, killerId: client.sessionId, victim: target.nickname, headshot });
+      }
     }
+    if (confirmedHit) this.send(client, 'hit', { headshot: false });
   }
 
   broadcastFire(client) {
@@ -164,8 +192,12 @@ export class GameRoom extends Room {
 
   spawnPlayer(player) {
     const points = SPAWN_POINTS[this.mapId] || SPAWN_POINTS.d2;
-    const [x, z] = points[Math.floor(Math.random() * points.length)];
-    player.x = x; player.y = 0; player.z = z; player.action = 'idle'; player.health = 100; player.alive = true; player.respawnSeconds = 0;
+    // Cycle the small, vetted set so respawns never appear to repeatedly use
+    // one point because of random chance.
+    const point = points[this.spawnIndex % points.length];
+    this.spawnIndex += 1;
+    const [x, spawnY = 0, z] = point.length === 3 ? point : [point[0], 0, point[1]];
+    player.x = x; player.y = spawnY; player.z = z; player.action = 'idle'; player.weapon = 'rifle'; player.health = 100; player.alive = true; player.respawnSeconds = 0;
   }
 
   finishMatch() {

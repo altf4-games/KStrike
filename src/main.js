@@ -327,6 +327,7 @@ const enterButton = document.querySelector("#enter-button");
 const exitMatchButton = document.querySelector('#exit-match-button');
 const speedReadout = document.querySelector("#movement-readout strong");
 const ammoCount = document.querySelector("#ammo-count");
+const weaponName = document.querySelector('#weapon-name');
 const reloadStatus = document.querySelector("#reload-status");
 const networkStatus = document.querySelector("#network-status");
 const healthCount = document.querySelector('#health-count');
@@ -365,6 +366,7 @@ let selectedMapId = localStorage.getItem('kstrike-map') || 'd2';
 let activeMapId = 'd2';
 let killStreak = 0;
 let localPositionInitialized = false;
+let voidRecoveryPending = false;
 
 const streakCards = [
   { title: 'FIRST BLOOD', detail: '1 ELIMINATION' },
@@ -444,7 +446,7 @@ function createRemotePlayer(nickname) {
     mesh.receiveShadow = true;
     return mesh;
   };
-  const rig = { arms: [], legs: [], rifle: null };
+  const rig = { arms: [], legs: [], rifle: null, shotgun: null };
   const pelvis = cube([0.54, 0.25, 0.28], armor);
   pelvis.position.y = 0.91;
   const torso = cube([0.64, 0.72, 0.34], uniform);
@@ -495,17 +497,34 @@ function createRemotePlayer(nickname) {
   rifle.rotation.x = 0;
   rig.arms[1].add(rifle);
   rig.rifle = rifle;
+  const shotgun = new THREE.Group();
+  const shotgunReceiver = cube([0.19, 0.15, 0.56], weaponMaterial);
+  shotgunReceiver.position.z = -0.2;
+  const shotgunBarrel = cube([0.12, 0.1, 0.78], armor);
+  shotgunBarrel.position.set(0, 0.01, -0.75);
+  const shotgunStock = cube([0.2, 0.18, 0.28], armor);
+  shotgunStock.position.set(0, -0.06, 0.13);
+  shotgun.add(shotgunReceiver, shotgunBarrel, shotgunStock);
+  shotgun.position.copy(rifle.position);
+  shotgun.visible = false;
+  rig.arms[1].add(shotgun);
+  rig.shotgun = shotgun;
   const remoteMuzzle = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 8), new THREE.MeshBasicMaterial({ color: '#fff1a8' }));
   remoteMuzzle.position.set(0, 0.015, -0.98);
   remoteMuzzle.visible = false;
   rifle.add(remoteMuzzle);
+  const remoteShotgunMuzzle = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), new THREE.MeshBasicMaterial({ color: '#fff1a8' }));
+  remoteShotgunMuzzle.position.set(0, 0.01, -1.16);
+  remoteShotgunMuzzle.visible = false;
+  shotgun.add(remoteShotgunMuzzle);
   avatar.userData.target = new THREE.Vector3();
   avatar.userData.rotation = 0;
   avatar.userData.pitch = 0;
   avatar.userData.nickname = nickname;
-  avatar.userData.muzzle = remoteMuzzle;
+  avatar.userData.muzzles = [remoteMuzzle, remoteShotgunMuzzle];
   avatar.userData.shotUntil = 0;
   avatar.userData.action = 'idle';
+  avatar.userData.weapon = 'rifle';
   avatar.userData.animationTime = Math.random() * Math.PI * 2;
   avatar.userData.rig = rig;
   scene.add(avatar);
@@ -561,7 +580,8 @@ function addKillFeed(message) {
   item.innerHTML = `<b>${message.killer}</b> <i>${message.headshot ? 'HEADSHOT' : 'ELIMINATED'}</i> ${message.victim}`;
   killFeed.prepend(item);
   if (message.killerId === multiplayerRoom?.sessionId) {
-    reserveAmmo = Math.min(180, reserveAmmo + 30);
+    const definition = weaponDefinitions[activeWeapon];
+    reserveAmmo = Math.min(definition.reserveCap, reserveAmmo + definition.magazineSize);
     killStreak += 1;
     updateKillStreak();
     updateAmmo();
@@ -623,12 +643,14 @@ async function startMatchConnection(options = {}) {
           avatar.userData.rotation = remote.rotation;
           avatar.userData.pitch = remote.pitch || 0;
           avatar.userData.action = remote.action || 'idle';
+          avatar.userData.weapon = remote.weapon || 'rifle';
           avatar.visible = remote.alive;
         });
         avatar.userData.target.set(remote.x, remote.y, remote.z);
         avatar.userData.rotation = remote.rotation;
         avatar.userData.pitch = remote.pitch || 0;
         avatar.userData.action = remote.action || 'idle';
+        avatar.userData.weapon = remote.weapon || 'rifle';
         avatar.visible = remote.alive;
       }, true);
       $(room.state).players.onRemove((remote, sessionId) => {
@@ -661,6 +683,13 @@ async function startMatchConnection(options = {}) {
       playGameSound('hit', { volume: 0.24 });
     });
     room.onMessage('match-ended', ({ winner }) => showMatchResult(winner));
+    room.onMessage('recovered', ({ x, y, z }) => {
+      player.position.set(x, y, z);
+      playerVelocity.set(0, 0, 0);
+      horizontalVelocity.set(0, 0, 0);
+      voidRecoveryPending = false;
+      grounded = true;
+    });
     room.onMessage('fire', ({ sessionId }) => {
       const avatar = remotePlayers.get(sessionId);
       if (avatar) {
@@ -706,11 +735,11 @@ joinRoomButton.addEventListener('click', () => {
 });
 
 function syncMultiplayer(now) {
-  if (!multiplayerRoom || now - lastNetworkSync < 50) return;
+  if (!multiplayerRoom || voidRecoveryPending || now - lastNetworkSync < 50) return;
   lastNetworkSync = now;
   multiplayerRoom.send('move', {
     x: player.position.x, y: player.position.y, z: player.position.z,
-    rotation: player.rotation.y, pitch: pitch.rotation.x, action: playerAction,
+    rotation: player.rotation.y, pitch: pitch.rotation.x, action: playerAction, weapon: activeWeapon,
   });
 }
 
@@ -718,8 +747,8 @@ function updateRemotePlayers(delta) {
   remotePlayers.forEach((avatar) => {
     avatar.position.lerp(avatar.userData.target, 1 - Math.exp(-12 * delta));
     avatar.rotation.y = THREE.MathUtils.damp(avatar.rotation.y, avatar.userData.rotation, 14, delta);
-    avatar.userData.muzzle.visible = performance.now() < avatar.userData.shotUntil;
-    const { arms, legs, rifle } = avatar.userData.rig;
+    avatar.userData.muzzles.forEach((muzzle) => { muzzle.visible = performance.now() < avatar.userData.shotUntil; });
+    const { arms, legs, rifle, shotgun } = avatar.userData.rig;
     const action = avatar.userData.action;
     const animationSpeed = action === 'run' ? 15 : action === 'walk' ? 10 : 3;
     avatar.userData.animationTime += delta * animationSpeed;
@@ -752,6 +781,9 @@ function updateRemotePlayers(delta) {
       20,
       delta,
     );
+    shotgun.rotation.copy(rifle.rotation);
+    rifle.visible = avatar.userData.weapon !== 'shotgun';
+    shotgun.visible = avatar.userData.weapon === 'shotgun';
   });
 }
 playAgainButton.addEventListener('click', () => { matchResult.hidden = true; });
@@ -791,7 +823,7 @@ muzzleFlash.rotation.set(Math.PI / 2, 0, 0);
 muzzleFlash.position.set(0.16, -0.05, -1.34);
 muzzleFlash.visible = false;
 weapon.add(muzzleFlash);
-const muzzleBasePosition = muzzleFlash.position.clone();
+const rifleMuzzleBasePosition = muzzleFlash.position.clone();
 const muzzleLight = new THREE.PointLight("#ffb347", 0, 5, 2);
 muzzleLight.position.copy(muzzleFlash.position);
 weapon.add(muzzleLight);
@@ -804,6 +836,27 @@ const muzzleOffset = new THREE.Vector3(0, -0.1, -1.1);
 const weaponModel = new THREE.Group();
 weaponModel.visible = false;
 weapon.add(weaponModel);
+const shotgunModel = new THREE.Group();
+const shotgunFallback = new THREE.Group();
+const shotgunBody = new THREE.MeshStandardMaterial({ color: '#31343a', roughness: 0.38, metalness: 0.72 });
+const shotgunWood = new THREE.MeshStandardMaterial({ color: '#5e3825', roughness: 0.7 });
+function shotgunPart(size, position, material = shotgunBody) {
+  const part = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+  part.position.set(...position);
+  part.castShadow = true;
+  shotgunFallback.add(part);
+}
+// Compact pump shotgun viewmodel: two barrels, receiver, pump, and stock.
+shotgunPart([0.2, 0.16, 0.7], [0.16, -0.11, -0.48]);
+shotgunPart([0.055, 0.055, 0.76], [0.105, -0.045, -1.14]);
+shotgunPart([0.055, 0.055, 0.76], [0.215, -0.045, -1.14]);
+shotgunPart([0.27, 0.14, 0.3], [0.16, -0.18, -0.78], shotgunWood);
+shotgunPart([0.22, 0.23, 0.36], [0.16, -0.25, -0.08], shotgunWood);
+shotgunPart([0.13, 0.12, 0.24], [0.16, 0.02, -0.36], weaponAccent);
+shotgunModel.add(shotgunFallback);
+shotgunModel.visible = false;
+weapon.add(shotgunModel);
+const shotgunMuzzleBasePosition = new THREE.Vector3(0.16, -0.045, -1.54);
 new GLTFLoader().load(
   "/assets/weapons/near_future_assault_rifle.glb",
   (gltf) => {
@@ -828,12 +881,12 @@ new GLTFLoader().load(
       );
       weapon.worldToLocal(muzzlePoint);
       weapon.add(muzzleFlash);
-      muzzleBasePosition.copy(muzzlePoint);
+      rifleMuzzleBasePosition.copy(muzzlePoint);
       muzzleFlash.scale.setScalar(1);
       muzzleFlash.add(muzzleLight);
       muzzleLight.position.set(0, 0, 0);
     }
-    weaponModel.visible = true;
+    weaponModel.visible = activeWeapon === 'rifle';
     fallbackWeapon.visible = false;
   },
   undefined,
@@ -843,12 +896,82 @@ new GLTFLoader().load(
     );
   },
 );
+new GLTFLoader().load(
+  '/assets/weapons/shotgun.glb',
+  (gltf) => {
+    const shotgun = gltf.scene;
+    // The Sketchfab asset is authored at a large scale and points +Z.
+    shotgun.rotation.y = Math.PI;
+    shotgun.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(shotgun);
+    const size = bounds.getSize(new THREE.Vector3());
+    shotgun.scale.multiplyScalar(1.72 / Math.max(size.x, size.y, size.z));
+    shotgun.updateMatrixWorld(true);
+    const scaledBounds = new THREE.Box3().setFromObject(shotgun);
+    const centre = scaledBounds.getCenter(new THREE.Vector3());
+    const scaledSize = scaledBounds.getSize(new THREE.Vector3());
+    shotgun.position.set(0.16 - centre.x, -0.2 - centre.y, -0.86 - centre.z);
+    shotgun.traverse((node) => {
+      if (node.isMesh) { node.castShadow = true; node.frustumCulled = false; }
+    });
+    shotgunFallback.visible = false;
+    shotgunModel.add(shotgun);
+    weapon.updateMatrixWorld(true);
+    // Sample the model's foremost vertices after all import transforms. This
+    // anchors the effect to the actual barrel opening instead of its bounds.
+    let muzzleZ = Infinity;
+    const muzzleSamples = [];
+    const vertex = new THREE.Vector3();
+    const weaponSpaceVertex = new THREE.Vector3();
+    shotgun.traverse((node) => {
+      if (!node.isMesh) return;
+      const positions = node.geometry.getAttribute('position');
+      for (let index = 0; index < positions.count; index += 1) {
+        vertex.fromBufferAttribute(positions, index);
+        node.localToWorld(vertex);
+        weaponSpaceVertex.copy(vertex);
+        weapon.worldToLocal(weaponSpaceVertex);
+        muzzleZ = Math.min(muzzleZ, weaponSpaceVertex.z);
+      }
+    });
+    shotgun.traverse((node) => {
+      if (!node.isMesh) return;
+      const positions = node.geometry.getAttribute('position');
+      for (let index = 0; index < positions.count; index += 1) {
+        vertex.fromBufferAttribute(positions, index);
+        node.localToWorld(vertex);
+        weaponSpaceVertex.copy(vertex);
+        weapon.worldToLocal(weaponSpaceVertex);
+        if (weaponSpaceVertex.z <= muzzleZ + 0.025) muzzleSamples.push(weaponSpaceVertex.clone());
+      }
+    });
+    if (muzzleSamples.length) {
+      shotgunMuzzleBasePosition.set(0, 0, 0);
+      muzzleSamples.forEach((sample) => shotgunMuzzleBasePosition.add(sample));
+      shotgunMuzzleBasePosition.multiplyScalar(1 / muzzleSamples.length);
+      shotgunMuzzleBasePosition.z -= 0.035;
+    } else {
+      shotgunMuzzleBasePosition.set(0.16, -0.2, -0.86 - scaledSize.z / 2 - 0.02);
+    }
+  },
+  undefined,
+  () => console.warn('Custom shotgun model could not be loaded; using the built-in fallback.'),
+);
 
 const raycaster = new THREE.Raycaster();
 const normalMatrix = new THREE.Matrix3();
 const decals = [];
-let magazine = 30;
-let reserveAmmo = 90;
+const weaponDefinitions = {
+  rifle: { label: 'AR-01 / AUTO', magazineSize: 30, reserveCap: 180, fireInterval: 92, reloadMs: 1200, recoil: 0.009, pellets: 1, spread: 0 },
+  shotgun: { label: 'SG-12 / PUMP', magazineSize: 8, reserveCap: 64, fireInterval: 400, reloadMs: 1050, recoil: 0.032, pellets: 8, spread: 0.022 },
+};
+const weaponAmmo = {
+  rifle: { magazine: 30, reserve: 90 },
+  shotgun: { magazine: 8, reserve: 32 },
+};
+let activeWeapon = 'rifle';
+let magazine = weaponAmmo.rifle.magazine;
+let reserveAmmo = weaponAmmo.rifle.reserve;
 let reloading = false;
 let reloadCompleteAt = 0;
 let triggerHeld = false;
@@ -858,15 +981,28 @@ let muzzleUntil = 0;
 
 function updateAmmo() {
   ammoCount.innerHTML = `${magazine} <i>/</i> ${reserveAmmo}`;
+  weaponName.textContent = weaponDefinitions[activeWeapon].label;
+}
+function equipWeapon(nextWeapon) {
+  if (!weaponDefinitions[nextWeapon] || nextWeapon === activeWeapon || reloading) return;
+  weaponAmmo[activeWeapon] = { magazine, reserve: reserveAmmo };
+  activeWeapon = nextWeapon;
+  ({ magazine, reserve: reserveAmmo } = weaponAmmo[activeWeapon]);
+  weaponModel.visible = activeWeapon === 'rifle' && weaponModel.children.length > 0;
+  fallbackWeapon.visible = activeWeapon === 'rifle' && weaponModel.children.length === 0;
+  shotgunModel.visible = activeWeapon === 'shotgun';
+  reloadStatus.textContent = '';
+  updateAmmo();
 }
 function playWeaponSound(reload = false) {
   playGameSound(reload ? 'reload' : 'fire', { volume: reload ? 0.42 : 0.3 });
 }
 function startReload(now = performance.now()) {
-  if (reloading || magazine === 30 || reserveAmmo === 0) return;
+  const definition = weaponDefinitions[activeWeapon];
+  if (reloading || magazine === definition.magazineSize || reserveAmmo === 0) return;
   reloading = true;
   playerAction = 'reload';
-  reloadCompleteAt = now + 1200;
+  reloadCompleteAt = now + definition.reloadMs;
   reloadStatus.textContent = "RELOADING";
   playWeaponSound(true);
 }
@@ -885,7 +1021,8 @@ function addDecal(hit) {
   if (decals.length > 28) scene.remove(decals.shift().mesh);
 }
 function fire(now) {
-  if (!locked || !localAlive || reloading || now - lastShotAt < 92) return;
+  const definition = weaponDefinitions[activeWeapon];
+  if (!locked || !localAlive || reloading || now - lastShotAt < definition.fireInterval) return;
   if (magazine === 0) {
     startReload(now);
     return;
@@ -900,37 +1037,46 @@ function fire(now) {
   muzzleFlash.visible = true;
   multiplayerRoom?.send('fire');
   pitch.rotation.x = THREE.MathUtils.clamp(
-    pitch.rotation.x + 0.009,
+    pitch.rotation.x + definition.recoil,
     -1.42,
     1.42,
   );
   camera.updateMatrixWorld();
-  raycaster.setFromCamera(new THREE.Vector2(), camera);
-  const hit = raycaster.intersectObjects(shootables, true)[0];
-  const playerHit = raycaster.intersectObjects([...remotePlayers.values()], true)[0];
-  if (playerHit && (!hit || playerHit.distance < hit.distance)) {
-    let owner = playerHit.object;
-    while (owner && !owner.userData.sessionId) owner = owner.parent;
-    if (owner?.userData.sessionId) {
-      multiplayerRoom?.send('shoot', {
-        targetId: owner.userData.sessionId,
-        headshot: playerHit.point.y - owner.position.y > 1.15,
-      });
-      return;
+  const impacts = [];
+  for (let pellet = 0; pellet < definition.pellets; pellet += 1) {
+    const crosshairOffset = pellet === 0
+      ? new THREE.Vector2()
+      : new THREE.Vector2((Math.random() - 0.5) * definition.spread, (Math.random() - 0.5) * definition.spread);
+    raycaster.setFromCamera(crosshairOffset, camera);
+    const hit = raycaster.intersectObjects(shootables, true)[0];
+    const playerHit = raycaster.intersectObjects([...remotePlayers.values()], true)[0];
+    if (playerHit && (!hit || playerHit.distance < hit.distance)) {
+      let owner = playerHit.object;
+      while (owner && !owner.userData.sessionId) owner = owner.parent;
+      if (owner?.userData.sessionId) {
+        impacts.push({ targetId: owner.userData.sessionId, headshot: playerHit.point.y - owner.position.y > 1.15 });
+        continue;
+      }
+    }
+    // One visible mark is enough for a spread blast and avoids decal spam.
+    if (hit && pellet === 0) {
+      addDecal(hit);
+      if (hit.object.userData.isTarget) hit.object.userData.hitUntil = now + 110;
     }
   }
-  if (!hit) return;
-  addDecal(hit);
-  if (hit.object.userData.isTarget) hit.object.userData.hitUntil = now + 110;
+  if (impacts.length) multiplayerRoom?.send('shoot', { weapon: activeWeapon, impacts });
 }
 function updateWeapon(now, delta) {
   // Apply the editable offset every frame, rather than only when the glTF first loads.
-  muzzleFlash.position.copy(muzzleBasePosition).add(muzzleOffset);
+  const muzzleBase = activeWeapon === 'shotgun' ? shotgunMuzzleBasePosition : rifleMuzzleBasePosition;
+  muzzleFlash.position.copy(muzzleBase).add(activeWeapon === 'rifle' ? muzzleOffset : new THREE.Vector3());
   if (triggerHeld) fire(now);
   if (reloading && now >= reloadCompleteAt) {
-    const loaded = Math.min(30 - magazine, reserveAmmo);
+    const definition = weaponDefinitions[activeWeapon];
+    const loaded = Math.min(definition.magazineSize - magazine, reserveAmmo);
     magazine += loaded;
     reserveAmmo -= loaded;
+    weaponAmmo[activeWeapon] = { magazine, reserve: reserveAmmo };
     reloading = false;
     reloadStatus.textContent = "";
     updateAmmo();
@@ -980,38 +1126,27 @@ function getMapGroundHeight(x, z, rayStartY = 80, maxGroundY = Infinity, referen
       ? hit
       : closest
   ), null);
-  return groundHit ? groundHit.point.y + 0.03 : 0;
+  // `null` means the ray missed the map entirely. A real floor can be at
+  // height zero, so it must not be treated as an invalid spawn surface.
+  return groundHit ? groundHit.point.y + 0.03 : null;
 }
 
-function getStableD2Surface(x, z) {
+function getStableD2Surface(x, z, referenceY = player.position.y) {
   const samples = [[0, 0], [-0.55, -0.55], [0.55, -0.55], [-0.55, 0.55], [0.55, 0.55]];
-  const heights = samples.map(([offsetX, offsetZ]) => getMapGroundHeight(x + offsetX, z + offsetZ, 80, Infinity, 80));
-  if (heights.some((height) => height < 0.15)) return null;
+  const heights = samples.map(([offsetX, offsetZ]) => getMapGroundHeight(x + offsetX, z + offsetZ, 80, Infinity, referenceY));
+  if (heights.some((height) => height === null)) return null;
   if (Math.max(...heights) - Math.min(...heights) > 1.25) return null;
   return heights.reduce((total, height) => total + height, 0) / heights.length;
 }
 
 function snapPlayerToMapGround() {
   if (activeMapId !== 'd2' || !d2MapLoaded) return;
-  let spawnX = player.position.x;
-  let spawnZ = player.position.z;
-  let groundHeight = getStableD2Surface(spawnX, spawnZ);
-  // Reject spawn points that land on thin props, open air, or non-walkable map pieces.
-  if (groundHeight === null) {
-    const candidates = [
-      [0, 0], [-8, 6], [8, 6], [-10, -8], [10, -8],
-      [-20, 0], [20, 0], [-24, -16], [24, -16],
-    ];
-    for (const [candidateX, candidateZ] of candidates) {
-      const candidateHeight = getStableD2Surface(candidateX, candidateZ);
-      if (candidateHeight === null) continue;
-      spawnX = candidateX;
-      spawnZ = candidateZ;
-      groundHeight = candidateHeight;
-      break;
-    }
-  }
-  player.position.set(spawnX, groundHeight ?? 0, spawnZ);
+  // Multiplayer spawns already include a floor height sampled from this exact
+  // map mesh. Do not replace that authoritative point with a client fallback.
+  if (multiplayerRoom) return;
+  // A stable camera location for the lobby/loading view before the server
+  // supplies an authoritative spawn point.
+  player.position.set(10, 4.98, -8);
   playerVelocity.y = 0;
   grounded = true;
 }
@@ -1076,13 +1211,25 @@ function movePlayer(delta) {
   }
   playerVelocity.y -= gravity * delta;
   player.position.y += playerVelocity.y * delta;
+  if (activeMapId === 'd2' && (player.position.y < -8 || Math.abs(player.position.x) > 56 || Math.abs(player.position.z) > 67)) {
+    playerVelocity.set(0, 0, 0);
+    horizontalVelocity.set(0, 0, 0);
+    if (multiplayerRoom && !voidRecoveryPending) {
+      voidRecoveryPending = true;
+      multiplayerRoom.send('void');
+    } else if (!multiplayerRoom) {
+      player.position.set(10, 4.98, -8);
+      grounded = true;
+    }
+    return;
+  }
   const groundHeight = getMapGroundHeight(
     player.position.x,
     player.position.z,
     player.position.y + 3,
     player.position.y + 1.2,
   );
-  if (player.position.y <= groundHeight) {
+  if (groundHeight !== null && player.position.y <= groundHeight) {
     player.position.y = groundHeight;
     playerVelocity.y = 0;
     grounded = true;
@@ -1145,6 +1292,7 @@ async function leaveToMainMenu() {
   updateKillStreak();
   localAlive = true;
   localPositionInitialized = false;
+  voidRecoveryPending = false;
   networkStatus.textContent = 'OFFLINE // MAIN MENU';
   exitMatchButton.hidden = true;
   intro.hidden = true;
@@ -1182,6 +1330,8 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
   keys.add(event.code);
   if (event.code === "KeyR" && !event.repeat) startReload();
+  if (event.code === 'Digit1' && !event.repeat) equipWeapon('rifle');
+  if (event.code === 'Digit2' && !event.repeat) equipWeapon('shotgun');
   if (event.code === 'Tab') { renderScoreboard(); scoreboard.hidden = false; }
 });
 window.addEventListener("keyup", (event) => { keys.delete(event.code); if (event.code === 'Tab') scoreboard.hidden = true; });
@@ -1192,6 +1342,11 @@ window.addEventListener("mousedown", (event) => {
 window.addEventListener("mouseup", (event) => {
   if (event.button === 0) triggerHeld = false;
 });
+window.addEventListener('wheel', (event) => {
+  if (!locked) return;
+  event.preventDefault();
+  equipWeapon(event.deltaY > 0 ? 'shotgun' : 'rifle');
+}, { passive: false });
 window.addEventListener("contextmenu", (event) => event.preventDefault());
 
 const clock = new THREE.Clock();
