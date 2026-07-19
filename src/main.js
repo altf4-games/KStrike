@@ -416,6 +416,7 @@ updateKillStreak();
 
 const soundAssets = {
   fire: '/assets/audio/Rifle_Fire.wav',
+  shotgun: '/assets/audio/shotgun.wav',
   reload: '/assets/audio/Rifle_Reload.wav',
   hit: '/assets/audio/Hit_Marker.wav',
   death: '/assets/audio/Player_Death.wav',
@@ -694,7 +695,7 @@ async function startMatchConnection(options = {}) {
       const avatar = remotePlayers.get(sessionId);
       if (avatar) {
         avatar.userData.shotUntil = performance.now() + 90;
-        playGameSound('fire', { volume: 0.1 });
+        playGameSound(avatar.userData.weapon === 'shotgun' ? 'shotgun' : 'fire', { volume: 0.1 });
       }
     });
     // For newly created private rooms, use the requested code immediately.
@@ -995,7 +996,7 @@ function equipWeapon(nextWeapon) {
   updateAmmo();
 }
 function playWeaponSound(reload = false) {
-  playGameSound(reload ? 'reload' : 'fire', { volume: reload ? 0.42 : 0.3 });
+  playGameSound(reload ? 'reload' : activeWeapon === 'shotgun' ? 'shotgun' : 'fire', { volume: reload ? 0.42 : 0.3 });
 }
 function startReload(now = performance.now()) {
   const definition = weaponDefinitions[activeWeapon];
