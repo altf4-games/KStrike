@@ -15,7 +15,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color('#0f1115');
 scene.fog = new THREE.FogExp2('#0f1115', 0.024);
 
-const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.03, 180);
+const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.005, 180);
 const player = new THREE.Group();
 const pitch = new THREE.Group();
 player.position.set(12, 0, 10);
@@ -41,17 +41,20 @@ const trim = new THREE.MeshStandardMaterial({ color: '#1b2633', roughness: 0.42,
 const emissiveBlue = new THREE.MeshStandardMaterial({ color: '#2563eb', emissive: '#2563eb', emissiveIntensity: 2.3 });
 const emissiveRed = new THREE.MeshStandardMaterial({ color: '#ef4444', emissive: '#ef4444', emissiveIntensity: 2.3 });
 const colliders = [];
+const shootables = [];
 
 function box(width, height, depth, x, y, z, material = concrete, solid = true) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
   mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true;
   scene.add(mesh);
   if (solid) colliders.push({ minX: x - width / 2, maxX: x + width / 2, minZ: z - depth / 2, maxZ: z + depth / 2, height });
+  shootables.push(mesh);
   return mesh;
 }
 
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), concrete);
 floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+shootables.push(floor);
 
 // Compact, readable deathmatch arena assembled from simple collision-ready blocks.
 box(16, 5, 1, 0, 2.5, -12); box(1, 5, 24, -15, 2.5, 0); box(1, 5, 24, 15, 2.5, 0); box(30, 5, 1, 0, 2.5, 12);
@@ -72,7 +75,9 @@ const targetGroup = new THREE.Group(); scene.add(targetGroup);
 for (const [x, z, mat] of [[-3, -8, emissiveRed], [3, -8, emissiveBlue], [0, 1, emissiveRed]]) {
   const target = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.12, 24), mat);
   target.rotation.x = Math.PI / 2; target.position.set(x, 2.4, z); target.castShadow = true;
+  target.userData.isTarget = true;
   targetGroup.add(target);
+  shootables.push(target);
   box(0.12, 2.25, 0.12, x, 1.1, z + 0.08, trim, false);
 }
 
@@ -96,6 +101,90 @@ let bobTime = 0;
 const intro = document.querySelector('#intro-screen');
 const enterButton = document.querySelector('#enter-button');
 const speedReadout = document.querySelector('#movement-readout strong');
+const ammoCount = document.querySelector('#ammo-count');
+const reloadStatus = document.querySelector('#reload-status');
+
+// An intentionally lightweight viewmodel: no downloaded assets are needed for the first rifle.
+const weapon = new THREE.Group();
+const weaponBody = new THREE.MeshStandardMaterial({ color: '#202832', roughness: 0.45, metalness: 0.7 });
+const weaponAccent = new THREE.MeshStandardMaterial({ color: '#2563eb', emissive: '#2563eb', emissiveIntensity: 0.8, metalness: 0.5 });
+function weaponPart(size, position, material = weaponBody) {
+  const part = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+  part.position.set(...position); weapon.add(part); return part;
+}
+weaponPart([0.19, 0.15, 0.6], [0.16, -0.1, -0.38]);
+weaponPart([0.07, 0.07, 0.65], [0.16, -0.05, -0.97]);
+weaponPart([0.1, 0.16, 0.25], [0.16, -0.22, -0.18], weaponAccent);
+weaponPart([0.12, 0.23, 0.12], [0.15, -0.28, -0.43]);
+weaponPart([0.09, 0.07, 0.28], [0.16, 0.04, -0.24], weaponAccent);
+const muzzleFlash = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.28, 6), new THREE.MeshBasicMaterial({ color: '#fff1a8' }));
+muzzleFlash.rotation.x = -Math.PI / 2; muzzleFlash.position.set(0.16, -0.05, -1.34); muzzleFlash.visible = false; weapon.add(muzzleFlash);
+weapon.position.set(0.42, -0.34, -0.58); weapon.rotation.set(-0.08, -0.16, 0); camera.add(weapon);
+
+const raycaster = new THREE.Raycaster();
+const normalMatrix = new THREE.Matrix3();
+const decals = [];
+let magazine = 30;
+let reserveAmmo = 90;
+let reloading = false;
+let reloadCompleteAt = 0;
+let triggerHeld = false;
+let lastShotAt = 0;
+let weaponKick = 0;
+let muzzleUntil = 0;
+let audioContext;
+
+function updateAmmo() { ammoCount.innerHTML = `${magazine} <i>/</i> ${reserveAmmo}`; }
+function playWeaponSound(reload = false) {
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  if (!Audio) return;
+  if (!audioContext) audioContext = new Audio();
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  const now = audioContext.currentTime;
+  oscillator.type = reload ? 'triangle' : 'square';
+  oscillator.frequency.setValueAtTime(reload ? 210 : 115, now);
+  oscillator.frequency.exponentialRampToValueAtTime(reload ? 320 : 58, now + (reload ? 0.09 : 0.055));
+  gain.gain.setValueAtTime(reload ? 0.045 : 0.035, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + (reload ? 0.1 : 0.06));
+  oscillator.connect(gain).connect(audioContext.destination); oscillator.start(now); oscillator.stop(now + (reload ? 0.11 : 0.07));
+}
+function startReload(now = performance.now()) {
+  if (reloading || magazine === 30 || reserveAmmo === 0) return;
+  reloading = true; reloadCompleteAt = now + 1200; reloadStatus.textContent = 'RELOADING'; playWeaponSound(true);
+}
+function addDecal(hit) {
+  if (!hit.face) return;
+  const decal = new THREE.Mesh(new THREE.CircleGeometry(0.055, 10), new THREE.MeshBasicMaterial({ color: '#14171b', side: THREE.DoubleSide }));
+  normalMatrix.getNormalMatrix(hit.object.matrixWorld);
+  const normal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+  decal.position.copy(hit.point).addScaledVector(normal, 0.006);
+  decal.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+  scene.add(decal); decals.push({ mesh: decal, expiresAt: performance.now() + 9000 });
+  if (decals.length > 28) scene.remove(decals.shift().mesh);
+}
+function fire(now) {
+  if (!locked || reloading || now - lastShotAt < 92) return;
+  if (magazine === 0) { startReload(now); return; }
+  lastShotAt = now; magazine -= 1; updateAmmo(); playWeaponSound(); weaponKick = 1; muzzleUntil = now + 42; muzzleFlash.visible = true;
+  pitch.rotation.x = THREE.MathUtils.clamp(pitch.rotation.x + 0.009, -1.42, 1.42);
+  camera.updateMatrixWorld(); raycaster.setFromCamera(new THREE.Vector2(), camera);
+  const hit = raycaster.intersectObjects(shootables, false)[0];
+  if (!hit) return;
+  addDecal(hit);
+  if (hit.object.userData.isTarget) hit.object.userData.hitUntil = now + 110;
+}
+function updateWeapon(now, delta) {
+  if (triggerHeld) fire(now);
+  if (reloading && now >= reloadCompleteAt) {
+    const loaded = Math.min(30 - magazine, reserveAmmo);
+    magazine += loaded; reserveAmmo -= loaded; reloading = false; reloadStatus.textContent = ''; updateAmmo();
+  }
+  weaponKick = THREE.MathUtils.damp(weaponKick, 0, 16, delta);
+  weapon.position.z = -0.58 + weaponKick * 0.085; weapon.rotation.x = -0.08 - weaponKick * 0.13;
+  muzzleFlash.visible = now < muzzleUntil;
+  for (let index = decals.length - 1; index >= 0; index -= 1) if (now >= decals[index].expiresAt) { scene.remove(decals[index].mesh); decals.splice(index, 1); }
+}
 
 function blocksPosition(x, z) {
   return colliders.some((collider) => {
@@ -156,23 +245,36 @@ canvas.addEventListener('click', () => { if (!locked) lockArena(); });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
   intro.classList.toggle('intro--dismissed', locked);
-  if (!locked) { intro.hidden = false; enterButton.innerHTML = 'RESUME ARENA <span>↗</span>'; }
+  if (!locked) { triggerHeld = false; intro.hidden = false; enterButton.innerHTML = 'RESUME ARENA <span>↗</span>'; }
 });
 document.addEventListener('mousemove', (event) => {
   if (!locked) return;
   player.rotation.y -= event.movementX * 0.0021;
   pitch.rotation.x = THREE.MathUtils.clamp(pitch.rotation.x - event.movementY * 0.0021, -1.42, 1.42);
 });
-window.addEventListener('keydown', (event) => { if (['Space', 'ArrowUp', 'ArrowDown'].includes(event.code)) event.preventDefault(); keys.add(event.code); });
+window.addEventListener('keydown', (event) => {
+  if (['Space', 'ArrowUp', 'ArrowDown'].includes(event.code)) event.preventDefault();
+  keys.add(event.code);
+  if (event.code === 'KeyR' && !event.repeat) startReload();
+});
 window.addEventListener('keyup', (event) => keys.delete(event.code));
 window.addEventListener('blur', () => keys.clear());
+window.addEventListener('mousedown', (event) => { if (event.button === 0) triggerHeld = true; });
+window.addEventListener('mouseup', (event) => { if (event.button === 0) triggerHeld = false; });
+window.addEventListener('contextmenu', (event) => event.preventDefault());
 
 const clock = new THREE.Clock();
 function animate() {
   const delta = Math.min(clock.getDelta(), 0.05);
+  const now = performance.now();
   const t = clock.elapsedTime;
-  targetGroup.children.forEach((child, index) => { if (child.geometry.type === 'CylinderGeometry') child.position.y = 2.4 + Math.sin(t * 1.45 + index) * 0.12; });
+  targetGroup.children.forEach((child, index) => {
+    if (child.geometry.type !== 'CylinderGeometry') return;
+    child.position.y = 2.4 + Math.sin(t * 1.45 + index) * 0.12;
+    child.scale.setScalar(now < child.userData.hitUntil ? 1.12 : 1);
+  });
   movePlayer(delta);
+  updateWeapon(now, delta);
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
