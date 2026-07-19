@@ -1,9 +1,14 @@
 import { Room } from '@colyseus/core';
 import { Schema, MapSchema, defineTypes } from '@colyseus/schema';
 
-const SPAWN_POINTS = [
-  [12, 10], [-12, 9], [0, 6], [-11, -8], [11, -8], [0, -3],
-];
+const SPAWN_POINTS = {
+  d2: [
+    [23, 19], [2, 10], [-21, 11], [21, -20], [-26, -18],
+    [-11, 7], [11, 5], [-7, -9], [8, -7], [-20, 1], [20, 0],
+    [-28, -10], [27, -4], [-4, 18], [15, 12],
+  ],
+  training: [[12, 10], [-12, 9], [0, 6], [-11, -8], [11, -8], [0, -3]],
+};
 
 class PlayerState extends Schema {
   constructor() {
@@ -31,6 +36,7 @@ class GameState extends Schema {
     super();
     this.players = new MapSchema();
     this.roomCode = '';
+    this.mapId = 'd2';
     this.status = 'WAITING';
     this.countdown = 10;
     this.matchTime = 300;
@@ -38,18 +44,20 @@ class GameState extends Schema {
   }
 }
 defineTypes(GameState, {
-  players: { map: PlayerState }, roomCode: 'string', status: 'string', countdown: 'number', matchTime: 'number', winner: 'string',
+  players: { map: PlayerState }, roomCode: 'string', mapId: 'string', status: 'string', countdown: 'number', matchTime: 'number', winner: 'string',
 });
 
 export class GameRoom extends Room {
   onCreate(options = {}) {
     this.maxClients = Math.max(2, Math.min(10, Number(options.maxPlayers) || 10));
     this.roomCode = String(options.roomCode || '').toUpperCase().slice(0, 6);
+    this.mapId = options.mapId === 'training' ? 'training' : 'd2';
     this.isPrivate = Boolean(options.isPrivate);
     this.patchRate = 50;
     this.setState(new GameState());
     this.state.roomCode = this.roomCode;
-    this.setMetadata({ roomCode: this.roomCode, isPrivate: this.isPrivate, maxPlayers: this.maxClients });
+    this.state.mapId = this.mapId;
+    this.setMetadata({ roomCode: this.roomCode, mapId: this.mapId, isPrivate: this.isPrivate, maxPlayers: this.maxClients });
     this.onMessage('move', (client, movement) => this.updatePlayer(client, movement));
     this.onMessage('shoot', (client, shot) => this.applyShot(client, shot));
     this.onMessage('fire', (client) => this.broadcastFire(client));
@@ -107,10 +115,10 @@ export class GameRoom extends Room {
   updatePlayer(client, movement) {
     const player = this.state.players.get(client.sessionId);
     if (!player || !player.alive || !movement) return;
-    // Phase 4 accepts client movement, but bounds it to the playable arena.
-    if (Number.isFinite(movement.x)) player.x = Math.max(-14, Math.min(14, movement.x));
+    const bounds = this.mapId === 'd2' ? { x: 52, z: 66 } : { x: 14, z: 11 };
+    if (Number.isFinite(movement.x)) player.x = Math.max(-bounds.x, Math.min(bounds.x, movement.x));
     if (Number.isFinite(movement.y)) player.y = Math.max(0, Math.min(8, movement.y));
-    if (Number.isFinite(movement.z)) player.z = Math.max(-11, Math.min(11, movement.z));
+    if (Number.isFinite(movement.z)) player.z = Math.max(-bounds.z, Math.min(bounds.z, movement.z));
     if (Number.isFinite(movement.rotation)) player.rotation = movement.rotation;
     if (Number.isFinite(movement.pitch)) player.pitch = Math.max(-1.42, Math.min(1.42, movement.pitch));
   }
@@ -153,7 +161,8 @@ export class GameRoom extends Room {
   }
 
   spawnPlayer(player) {
-    const [x, z] = SPAWN_POINTS[Math.floor(Math.random() * SPAWN_POINTS.length)];
+    const points = SPAWN_POINTS[this.mapId] || SPAWN_POINTS.d2;
+    const [x, z] = points[Math.floor(Math.random() * points.length)];
     player.x = x; player.y = 0; player.z = z; player.health = 100; player.alive = true; player.respawnSeconds = 0;
   }
 

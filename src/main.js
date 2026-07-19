@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { Client, getStateCallbacks } from "colyseus.js";
+import { MeshBVH, StaticGeometryGenerator } from 'three-mesh-bvh';
 import "./style.css";
 
 const canvas = document.querySelector("#game-canvas");
@@ -79,6 +80,21 @@ const emissiveRed = new THREE.MeshStandardMaterial({
 });
 const colliders = [];
 const shootables = [];
+const arenaGroup = new THREE.Group();
+scene.add(arenaGroup);
+let targetGroup;
+let d2MapModel;
+let d2MapLoaded = false;
+let d2CollisionBVH;
+const D2_MODEL_SCALE = 1.5;
+
+function clearArena() {
+  colliders.length = 0;
+  shootables.length = 0;
+  arenaGroup.clear();
+  targetGroup = new THREE.Group();
+  arenaGroup.add(targetGroup);
+}
 
 function box(width, height, depth, x, y, z, material = concrete, solid = true) {
   const mesh = new THREE.Mesh(
@@ -88,7 +104,7 @@ function box(width, height, depth, x, y, z, material = concrete, solid = true) {
   mesh.position.set(x, y, z);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  scene.add(mesh);
+  arenaGroup.add(mesh);
   if (solid)
     colliders.push({
       minX: x - width / 2,
@@ -101,10 +117,12 @@ function box(width, height, depth, x, y, z, material = concrete, solid = true) {
   return mesh;
 }
 
+function buildTrainingArena() {
+clearArena();
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), concrete);
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
-scene.add(floor);
+arenaGroup.add(floor);
 shootables.push(floor);
 
 // Compact, readable deathmatch arena assembled from simple collision-ready blocks.
@@ -130,8 +148,6 @@ for (let x = -10; x <= 10; x += 5) {
   }
 }
 
-const targetGroup = new THREE.Group();
-scene.add(targetGroup);
 for (const [x, z, mat] of [
   [-3, -8, emissiveRed],
   [3, -8, emissiveBlue],
@@ -149,6 +165,126 @@ for (const [x, z, mat] of [
   shootables.push(target);
   box(0.12, 2.25, 0.12, x, 1.1, z + 0.08, trim, false);
 }
+}
+
+const sand = new THREE.MeshStandardMaterial({ color: '#b58b53', roughness: 0.94 });
+const sandstone = new THREE.MeshStandardMaterial({ color: '#c49a60', roughness: 0.88 });
+const sunbaked = new THREE.MeshStandardMaterial({ color: '#785333', roughness: 0.91 });
+const canopy = new THREE.MeshStandardMaterial({ color: '#76573a', roughness: 0.8, metalness: 0.08 });
+
+function buildD2Arena() {
+  clearArena();
+  scene.background.set('#c48b58');
+  scene.fog.color.set('#c48b58');
+  scene.fog.density = 0.018;
+  ambient.color.set('#ffe2ae');
+  ambient.groundColor.set('#60412a');
+  key.color.set('#fff0c8');
+  key.intensity = 3.8;
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), sand);
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  arenaGroup.add(floor);
+  shootables.push(floor);
+  // D2 blockout: T Spawn -> Long/Mid, with Catwalk and tunnels reaching A and B.
+  // Outer playable boundary.
+  box(70, 6, 1, 0, 3, 31, sandstone); box(70, 6, 1, 0, 3, -31, sandstone);
+  box(1, 6, 62, -35, 3, 0, sandstone); box(1, 6, 62, 35, 3, 0, sandstone);
+  // T Spawn (north): exits south to Mid and east to Long.
+  box(8, 4.5, 1, -11, 2.25, 25, sandstone); box(8, 4.5, 1, 11, 2.25, 25, sandstone);
+  box(1, 4.5, 11, -15, 2.25, 25, sandstone); box(1, 4.5, 4, 15, 2.25, 28.5, sandstone);
+  box(1, 4.5, 3, 15, 2.25, 20.5, sandstone);
+  // Mid: wide north-south central lane, with door-like cover and west Catwalk approach.
+  box(1, 4.5, 24, -7, 2.25, 12, sandstone); box(1, 4.5, 24, 7, 2.25, 12, sandstone);
+  box(4.2, 3.3, 0.8, 0, 1.65, 18.3, sunbaked);
+  box(2.3, 2.4, 2, -1.8, 1.2, 14.5, canopy);
+  // Long A: eastern corridor and corner/pit leading into A site.
+  box(1, 4.5, 29, 19, 2.25, 10.5, sandstone); box(1, 4.5, 20, 29, 2.25, 15, sandstone);
+  box(8, 4.5, 1, 24, 2.25, 25, sandstone); box(6, 4.5, 1, 32, 2.25, 5, sandstone);
+  box(5, 2.8, 3.5, 24, 1.4, 13, new THREE.MeshStandardMaterial({ color: '#335e77', roughness: 0.7 }));
+  box(4, 2.2, 4, 26.5, 1.1, 0, canopy);
+  // Catwalk / Short A: west raised route from Mid into A.
+  box(1, 3.5, 16, -13, 1.75, 5, sandstone); box(1, 3.5, 12, -5, 1.75, 1, sandstone);
+  box(8, 1.25, 3, -9, 0.62, 4, sunbaked);
+  box(1.7, 0.55, 3, -5.4, 0.27, 1.5, sunbaked);
+  // A Site: open southern-east plaza, Long and Catwalk entries, cover and elevated box.
+  box(1, 4.8, 17, 11, 2.4, -6.5, sandstone); box(1, 4.8, 17, 32, 2.4, -6.5, sandstone);
+  box(21, 4.8, 1, 21.5, 2.4, -15, sandstone); box(9, 4.8, 1, 15.5, 2.4, 2, sandstone);
+  box(2.5, 2.2, 4, 16, 1.1, -4, canopy); box(4.2, 1.5, 3.2, 24, 0.75, -7, sunbaked);
+  box(2.5, 1.15, 2.5, 27.5, 0.57, -2.5, canopy);
+  // CT Spawn: south-east room joining A and the tunnel connector.
+  box(11, 4.5, 1, 22, 2.25, -24, sandstone); box(1, 4.5, 12, 28, 2.25, -19, sandstone);
+  box(1, 4.5, 7, 16, 2.25, -21.5, sandstone); box(4, 4.5, 1, 18, 2.25, -14, sandstone);
+  // B tunnels: two narrow, bent parallel runs from upper Mid down to B.
+  box(1, 4.2, 27, -26, 2.1, 2.5, sandstone); box(1, 4.2, 17, -18, 2.1, 7.5, sandstone);
+  box(5, 4.2, 1, -22, 2.1, 16, sandstone); box(4, 4.2, 1, -22, 2.1, -11, sandstone);
+  box(1.2, 2.2, 5, -22, 1.1, 7, canopy); box(1.5, 1.3, 2.4, -24, 0.65, 1.5, sunbaked);
+  // B Site: enclosed south-west court with platform, window-side boxes, and CT doors.
+  box(1, 4.8, 16, -33, 2.4, -16, sandstone); box(1, 4.8, 16, -15, 2.4, -16, sandstone);
+  box(18, 4.8, 1, -24, 2.4, -24, sandstone); box(7, 4.8, 1, -29.5, 2.4, -8, sandstone);
+  box(5, 1.35, 3.5, -28, 0.67, -18, sunbaked); box(2.4, 2.1, 2.4, -20, 1.05, -18, canopy);
+  box(3, 1, 2, -23, 0.5, -12.5, canopy);
+  showD2MapModel();
+}
+
+function showD2MapModel() {
+  if (!d2MapLoaded || !d2MapModel) return;
+  // Keep the lightweight blockout collider mesh active, but render the supplied D2 asset.
+  arenaGroup.children.forEach((child) => { if (child !== targetGroup) child.visible = false; });
+  arenaGroup.add(d2MapModel);
+  d2MapModel.visible = true;
+}
+
+function loadD2MapModel() {
+  new GLTFLoader().load(
+    '/assets/maps/de_dust_2.glb',
+    (gltf) => {
+      d2MapModel = gltf.scene;
+      d2MapModel.scale.setScalar(D2_MODEL_SCALE);
+      d2MapModel.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(d2MapModel);
+      const center = bounds.getCenter(new THREE.Vector3());
+      d2MapModel.position.sub(new THREE.Vector3(center.x, bounds.min.y, center.z));
+      d2MapModel.updateMatrixWorld(true);
+      d2MapModel.traverse((node) => {
+        if (!node.isMesh) return;
+        node.castShadow = true;
+        node.receiveShadow = true;
+      });
+      const generator = new StaticGeometryGenerator(d2MapModel);
+      generator.attributes = ['position'];
+      generator.applyWorldTransforms = true;
+      d2CollisionBVH = new MeshBVH(generator.generate(), { maxLeafSize: 16 });
+      // The GLB collider replaces the temporary D2 blockout boxes completely.
+      colliders.length = 0;
+      d2MapLoaded = true;
+      if (activeMapId === 'd2') {
+        showD2MapModel();
+        snapPlayerToMapGround();
+      }
+    },
+    undefined,
+    (error) => console.warn('D2 map model failed to load; using the blockout fallback.', error),
+  );
+}
+
+function applyArenaMap(mapId) {
+  if (mapId === 'training') {
+    scene.background.set('#0f1115');
+    scene.fog.color.set('#0f1115');
+    scene.fog.density = 0.024;
+    ambient.color.set('#b7d5f6');
+    ambient.groundColor.set('#14221d');
+    key.color.set('#d9ecff');
+    key.intensity = 3.2;
+    buildTrainingArena();
+    return;
+  }
+  buildD2Arena();
+}
+
+applyArenaMap('d2');
+loadD2MapModel();
 
 const keys = new Set();
 const playerVelocity = new THREE.Vector3();
@@ -193,6 +329,9 @@ const roomCodeInput = document.querySelector('#room-code-input');
 const quickMatchButton = document.querySelector('#quick-match-button');
 const createRoomButton = document.querySelector('#create-room-button');
 const joinRoomButton = document.querySelector('#join-room-button');
+const mapSelect = document.querySelector('#map-select');
+const mapButtons = [...mapSelect.querySelectorAll('[data-map]')];
+const killStreakElement = document.querySelector('#kill-streak');
 
 const remotePlayers = new Map();
 let multiplayerRoom;
@@ -202,6 +341,56 @@ let localAlive = true;
 let hitMarkerUntil = 0;
 let screenShake = 0;
 let lastFootstepAt = 0;
+let selectedMapId = localStorage.getItem('kstrike-map') || 'd2';
+let activeMapId = 'd2';
+let killStreak = 0;
+let localPositionInitialized = false;
+
+const streakCards = [
+  { title: 'FIRST BLOOD', detail: '1 ELIMINATION' },
+  { title: 'DOUBLE TAP', detail: '2 ELIMINATIONS' },
+  { title: 'ON FIRE', detail: '3 ELIMINATIONS' },
+  { title: 'RAMPAGE', detail: '4 ELIMINATIONS' },
+  { title: 'UNSTOPPABLE', detail: '5 ELIMINATIONS' },
+];
+
+const mapPresentation = {
+  d2: { code: 'D2', title: 'DESERT<br /><em>DISTRICT</em>', copy: 'A fast, lightweight browser FPS.<br />D2 deathmatch is online.' },
+  training: { code: 'ARENA', title: 'TRAINING<br /><em>YARD</em>', copy: 'A fast, lightweight browser FPS.<br />Movement training is online.' },
+};
+
+function updateMapPresentation(mapId) {
+  const presentation = mapPresentation[mapId] || mapPresentation.d2;
+  intro.querySelector('.eyebrow').textContent = `KSTRIKE / ${presentation.code}`;
+  intro.querySelector('h1').innerHTML = presentation.title;
+  intro.querySelector('.intro__copy').innerHTML = presentation.copy;
+  document.title = `KStrike — ${presentation.code}`;
+}
+
+function updateKillStreak() {
+  killStreakElement.hidden = killStreak === 0;
+  const firstVisibleKill = Math.max(0, killStreak - 6);
+  killStreakElement.innerHTML = Array.from({ length: killStreak - firstVisibleKill }, (_, offset) => {
+    const killNumber = firstVisibleKill + offset + 1;
+    const card = streakCards[Math.min(killNumber - 1, streakCards.length - 1)];
+    const current = killNumber === killStreak;
+    return `<div class="streak-card streak-card--active${current ? ' streak-card--current' : ''}"><b>${card.title}</b><span>${card.detail}</span><i>${String(killNumber).padStart(2, '0')}</i></div>`;
+  }).join('');
+}
+
+function selectMap(mapId) {
+  selectedMapId = mapId === 'training' ? 'training' : 'd2';
+  localStorage.setItem('kstrike-map', selectedMapId);
+  mapButtons.forEach((button) => button.classList.toggle('map-card--selected', button.dataset.map === selectedMapId));
+  updateMapPresentation(selectedMapId);
+  if (!multiplayerRoom && activeMapId !== selectedMapId) {
+    activeMapId = selectedMapId;
+    applyArenaMap(activeMapId);
+  }
+}
+
+selectMap(selectedMapId);
+updateKillStreak();
 
 const soundAssets = {
   fire: '/assets/audio/Rifle_Fire.wav',
@@ -254,10 +443,21 @@ function updateCombatHud() {
     const justRespawned = !localAlive && local.alive;
     localAlive = local.alive;
     healthCount.textContent = local.alive ? local.health : `R${local.respawnSeconds}`;
-    if (justDied) playGameSound('death', { volume: 0.42 });
+    if (justDied) {
+      killStreak = 0;
+      updateKillStreak();
+      playGameSound('death', { volume: 0.42 });
+    }
     if (justRespawned) {
       player.position.set(local.x, local.y, local.z);
       playerVelocity.set(0, 0, 0); horizontalVelocity.set(0, 0, 0);
+      snapPlayerToMapGround();
+    }
+    if (!localPositionInitialized) {
+      player.position.set(local.x, local.y, local.z);
+      playerVelocity.set(0, 0, 0); horizontalVelocity.set(0, 0, 0);
+      snapPlayerToMapGround();
+      localPositionInitialized = true;
     }
   }
   if (state.status === 'WAITING') matchTimer.textContent = 'WAITING FOR PLAYER';
@@ -284,6 +484,8 @@ function addKillFeed(message) {
   killFeed.prepend(item);
   if (message.killerId === multiplayerRoom?.sessionId) {
     reserveAmmo = Math.min(180, reserveAmmo + 30);
+    killStreak += 1;
+    updateKillStreak();
     updateAmmo();
   }
   window.setTimeout(() => item.remove(), 4500);
@@ -310,6 +512,7 @@ function connectToMatch(options = {}) {
 }
 
 async function startMatchConnection(options = {}) {
+  localPositionInitialized = false;
   const savedNickname = localStorage.getItem('kstrike-nickname');
   const nickname = nicknameInput.value.trim() || savedNickname || `Player-${Math.floor(1000 + Math.random() * 9000)}`;
   localStorage.setItem('kstrike-nickname', nickname);
@@ -318,7 +521,7 @@ async function startMatchConnection(options = {}) {
   const client = new Client(endpoint);
   networkStatus.textContent = 'CONNECTING // TRAINING';
   lobbyStatus.textContent = 'CONNECTING TO MATCH SERVER...';
-  const roomOptions = { nickname, isPrivate: Boolean(options.isPrivate), roomCode: options.roomCode || '', maxPlayers: options.maxPlayers || 10 };
+  const roomOptions = { nickname, mapId: selectedMapId, isPrivate: Boolean(options.isPrivate), roomCode: options.roomCode || '', maxPlayers: options.maxPlayers || 10 };
   try {
     const room = await (options.create ? client.create('deathmatch', roomOptions) : options.join ? client.join('deathmatch', roomOptions) : client.joinOrCreate('deathmatch', roomOptions));
     multiplayerRoom = room;
@@ -352,6 +555,12 @@ async function startMatchConnection(options = {}) {
       });
     };
     room.onStateChange(() => {
+      const roomMapId = room.state?.mapId;
+      if (roomMapId && roomMapId !== activeMapId) {
+        activeMapId = roomMapId;
+        applyArenaMap(activeMapId);
+        updateMapPresentation(activeMapId);
+      }
       bindPlayerCallbacks();
       updateCombatHud();
     });
@@ -379,12 +588,12 @@ async function startMatchConnection(options = {}) {
     // For newly created private rooms, use the requested code immediately.
     // State hydration can lag the join response by one network tick.
     const roomLabel = options.roomCode || room.state?.roomCode;
-    roomOverlay.textContent = roomLabel ? `ROOM // ${roomLabel}` : `ROOM // ${room.roomId.slice(0, 6).toUpperCase()}`;
+    roomOverlay.textContent = roomLabel ? `ROOM // ${roomLabel} // ${selectedMapId.toUpperCase()}` : `ROOM // ${room.roomId.slice(0, 6).toUpperCase()} // ${selectedMapId.toUpperCase()}`;
     scoreboardRoom.textContent = roomOverlay.textContent;
     intro.querySelector('.eyebrow').textContent = roomLabel
-      ? `PRIVATE ROOM CODE // ${roomLabel}`
-      : `PUBLIC MATCH // ${room.roomId.slice(0, 6).toUpperCase()}`;
-    intro.querySelector('.intro__copy').innerHTML = 'Room joined. Enter when you are ready.<br />Waiting players will appear in the arena.';
+      ? `PRIVATE ROOM // ${roomLabel} // ${selectedMapId.toUpperCase()}`
+      : `PUBLIC MATCH // ${room.roomId.slice(0, 6).toUpperCase()} // ${selectedMapId.toUpperCase()}`;
+    intro.querySelector('.intro__copy').innerHTML = `Room joined. Enter when you are ready.<br />${selectedMapId.toUpperCase()} is loading for all players.`;
     enterButton.innerHTML = 'ENTER ARENA <span>&gt;</span>';
     lobby.hidden = true;
     intro.hidden = false;
@@ -400,6 +609,7 @@ async function startMatchConnection(options = {}) {
 
 function generateRoomCode() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
 quickMatchButton.addEventListener('click', () => connectToMatch().catch(() => {}));
+mapButtons.forEach((button) => button.addEventListener('click', () => selectMap(button.dataset.map)));
 createRoomButton.addEventListener('click', () => {
   const roomCode = generateRoomCode();
   roomCodeInput.value = roomCode;
@@ -577,7 +787,7 @@ function fire(now) {
   );
   camera.updateMatrixWorld();
   raycaster.setFromCamera(new THREE.Vector2(), camera);
-  const hit = raycaster.intersectObjects(shootables, false)[0];
+  const hit = raycaster.intersectObjects(shootables, true)[0];
   const playerHit = raycaster.intersectObjects([...remotePlayers.values()], true)[0];
   if (playerHit && (!hit || playerHit.distance < hit.distance)) {
     let owner = playerHit.object;
@@ -621,6 +831,17 @@ function updateWeapon(now, delta) {
 }
 
 function blocksPosition(x, z) {
+  if (activeMapId === 'd2' && d2CollisionBVH) {
+    const origin = new THREE.Vector3(player.position.x, player.position.y + 1.05, player.position.z);
+    const movement = new THREE.Vector3(x - origin.x, 0, z - origin.z);
+    const distance = movement.length();
+    if (distance <= 0.0001) return false;
+    const hits = d2CollisionBVH.raycast(new THREE.Ray(origin, movement.normalize()), THREE.DoubleSide);
+    return hits.some((hit) => (
+      hit.distance <= distance + playerRadius
+      && Math.abs(hit.face.normal.y) < 0.65
+    ));
+  }
   return colliders.some((collider) => {
     const closestX = THREE.MathUtils.clamp(x, collider.minX, collider.maxX);
     const closestZ = THREE.MathUtils.clamp(z, collider.minZ, collider.maxZ);
@@ -628,6 +849,47 @@ function blocksPosition(x, z) {
     const dz = z - closestZ;
     return dx * dx + dz * dz < playerRadius * playerRadius;
   });
+}
+
+function getMapGroundHeight(x, z, rayStartY = 80, maxGroundY = Infinity, referenceY = player.position.y) {
+  if (activeMapId !== 'd2' || !d2CollisionBVH) return 0;
+  const ray = new THREE.Ray(new THREE.Vector3(x, rayStartY, z), new THREE.Vector3(0, -1, 0));
+  const groundHits = d2CollisionBVH.raycast(ray, THREE.DoubleSide)
+    .filter((hit) => hit.point.y <= maxGroundY);
+  const groundHit = groundHits.reduce((closest, hit) => (
+    !closest || Math.abs(hit.point.y - referenceY) < Math.abs(closest.point.y - referenceY)
+      ? hit
+      : closest
+  ), null);
+  return groundHit ? groundHit.point.y + 0.03 : 0;
+}
+
+function snapPlayerToMapGround() {
+  if (activeMapId !== 'd2' || !d2MapLoaded) return;
+  let spawnX = player.position.x;
+  let spawnZ = player.position.z;
+  let groundHeight = getMapGroundHeight(spawnX, spawnZ, 80, Infinity, 80);
+  // The model's lowest vertex is below several playable floors. If a server spawn
+  // has no walkable surface, find the nearest positive-height surface instead.
+  if (groundHeight < 0.15) {
+    const offsets = [0, -6, 6, -12, 12, -18, 18, -24, 24, -30, 30];
+    let found = false;
+    for (const offsetX of offsets) {
+      for (const offsetZ of offsets) {
+        const candidateHeight = getMapGroundHeight(offsetX, offsetZ, 80, Infinity, 80);
+        if (candidateHeight < 0.15) continue;
+        spawnX = offsetX;
+        spawnZ = offsetZ;
+        groundHeight = candidateHeight;
+        found = true;
+        break;
+      }
+      if (found) break;
+    }
+  }
+  player.position.set(spawnX, groundHeight, spawnZ);
+  playerVelocity.y = 0;
+  grounded = true;
 }
 
 function moveWithCollision(delta) {
@@ -690,8 +952,14 @@ function movePlayer(delta) {
   }
   playerVelocity.y -= gravity * delta;
   player.position.y += playerVelocity.y * delta;
-  if (player.position.y <= 0) {
-    player.position.y = 0;
+  const groundHeight = getMapGroundHeight(
+    player.position.x,
+    player.position.z,
+    player.position.y + 3,
+    player.position.y + 1.2,
+  );
+  if (player.position.y <= groundHeight) {
+    player.position.y = groundHeight;
     playerVelocity.y = 0;
     grounded = true;
   }
@@ -727,6 +995,8 @@ function movePlayer(delta) {
 
 function lockArena() {
   connectToMatch();
+  if (!document.fullscreenElement && document.fullscreenEnabled)
+    document.documentElement.requestFullscreen().catch(() => {});
   canvas.requestPointerLock();
 }
 enterButton.addEventListener("click", lockArena);
@@ -739,7 +1009,7 @@ document.addEventListener("pointerlockchange", () => {
   if (!locked) {
     triggerHeld = false;
     intro.hidden = false;
-    enterButton.innerHTML = "RESUME ARENA <span>↗</span>";
+    enterButton.innerHTML = `RESUME ${mapPresentation[activeMapId]?.code || 'MATCH'} <span>↗</span>`;
   }
 });
 document.addEventListener("mousemove", (event) => {

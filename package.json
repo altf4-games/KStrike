@@ -22,7 +22,8 @@
   "homepage": "https://github.com/altf4-games/KStrike#readme",
   "dependencies": {
     "colyseus.js": "^0.16.22",
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "three-mesh-bvh": "^0.9.13"
   },
   "devDependencies": {
     "vite": "^8.1.5"

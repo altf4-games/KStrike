@@ -20,3 +20,7 @@ Deploy the frontend to Vercel from this repository. Set the `VITE_COLYSEUS_URL` 
 Deploy the server as a Render Web Service using `render.yaml`. Render provides a free tier for this prototype; it can spin down after inactivity, so the first player may need to wait for it to wake.
 
 After both are deployed, redeploy the Vercel project with `VITE_COLYSEUS_URL` set. The browser client will then connect to the public multiplayer server instead of `localhost:2567`.
+
+## Asset attribution
+
+The `de_dust_2.glb` map asset is by Neo_minigan on Sketchfab, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): [De_Dust 2 with real light](https://sketchfab.com/3d-models/de-dust-2-with-real-light-4ce74cd95c584ce9b12b5ed9dc418db5).

@@ -15,7 +15,7 @@ const httpServer = createServer((request, response) => {
   response.end();
 });
 const gameServer = new Server({ transport: new WebSocketTransport({ server: httpServer }) });
-gameServer.define('deathmatch', GameRoom).filterBy(['isPrivate', 'roomCode']);
+gameServer.define('deathmatch', GameRoom).filterBy(['isPrivate', 'roomCode', 'mapId']);
 
 await gameServer.listen(port, host);
 console.log(`KStrike multiplayer server listening on ws://${host}:${port}`);

@@ -12,12 +12,12 @@
       <section class="loading" id="loading-screen" aria-live="polite">
         <div class="loading__mark">K<span>STRIKE</span></div>
         <div class="loading__bar"><i></i></div>
-        <p>LOADING TRAINING ARENA</p>
+        <p>LOADING D2 // DESERT DISTRICT</p>
       </section>
       <section class="intro" id="intro-screen" hidden>
-        <p class="eyebrow">KSTRIKE / BUILD 0.1</p>
-        <h1>TRAINING<br /><em>ARENA</em></h1>
-        <p class="intro__copy">A fast, lightweight browser FPS.<br />Movement training is online.</p>
+        <p class="eyebrow">KSTRIKE / D2</p>
+        <h1>DESERT<br /><em>DISTRICT</em></h1>
+        <p class="intro__copy">A fast, lightweight browser FPS.<br />D2 deathmatch is online.</p>
         <button id="enter-button" type="button">ENTER ARENA <span>↗</span></button>
         <p class="hint">MOUSE TO LOOK &nbsp;·&nbsp; WASD TO MOVE &nbsp;·&nbsp; SHIFT TO SPRINT &nbsp;·&nbsp; CTRL TO CROUCH</p>
       </section>
@@ -26,6 +26,11 @@
         <h1>FIND A<br /><em>MATCH</em></h1>
         <label class="lobby__label" for="nickname-input">NICKNAME</label>
         <input id="nickname-input" maxlength="16" autocomplete="nickname" placeholder="PLAYER" />
+        <p class="lobby__label lobby__label--map">SELECT MAP</p>
+        <div class="map-select" id="map-select">
+          <button class="map-card map-card--selected" type="button" data-map="d2"><b>D2</b><span>DESERT DISTRICT</span><small>DEFAULT</small></button>
+          <button class="map-card" type="button" data-map="training"><b>ARENA</b><span>TRAINING YARD</span><small>COMPACT</small></button>
+        </div>
         <div class="lobby__actions">
           <button id="quick-match-button" type="button">QUICK MATCH <span>&gt;</span></button>
           <button id="create-room-button" class="button--secondary" type="button">CREATE ROOM</button>
@@ -33,13 +38,14 @@
         <div class="lobby__join"><input id="room-code-input" maxlength="6" placeholder="ROOM CODE" /><button id="join-room-button" class="button--secondary" type="button">JOIN</button></div>
         <p class="lobby__status" id="lobby-status">CONNECT TO A LOCAL SERVER TO PLAY</p>
       </section>
-      <div class="hud-corner" aria-hidden="true"><i></i><span id="network-status">CONNECTING // TRAINING</span></div>
+      <div class="hud-corner" aria-hidden="true"><i></i><span id="network-status">CONNECTING // D2</span></div>
       <div class="movement-readout" id="movement-readout" aria-hidden="true">SPD <strong>0.0</strong></div>
       <div class="combat-hud"><strong id="health-count">100</strong><small>HP</small></div>
       <div class="match-timer" id="match-timer">05:00</div>
       <div class="room-overlay" id="room-overlay">ROOM // LOCAL</div>
       <div class="kill-feed" id="kill-feed" aria-live="polite"></div>
       <div class="hit-marker" id="hit-marker" aria-hidden="true"><i></i><b></b></div>
+      <div class="kill-streak" id="kill-streak" aria-live="polite"></div>
       <section class="scoreboard" id="scoreboard" hidden><header><span>DEATHMATCH</span><strong id="scoreboard-room">ROOM // LOCAL</strong><small>HOLD TAB</small></header><div id="scoreboard-players"></div></section>
       <div class="crosshair" aria-hidden="true"><i></i><b></b><em></em><span></span></div>
       <div class="weapon-hud" aria-live="polite"><small>AR-01 / AUTO</small><strong id="ammo-count">30 <i>/</i> 90</strong><span id="reload-status"></span></div>
