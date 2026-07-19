@@ -9,4 +9,6 @@ npm install
 npm run dev
 ```
 
+In a second terminal, start multiplayer with `npm run dev:server`. The client automatically joins the local training room when the player enters the arena.
+
 Build a production bundle with `npm run build`.

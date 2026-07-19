@@ -1,0 +1,16 @@
+{
+  "name": "kstrike-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@colyseus/core": "^0.16.24",
+    "@colyseus/schema": "^3.0.76",
+    "@colyseus/ws-transport": "^0.16.5",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  }
+}

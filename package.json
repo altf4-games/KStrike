@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:server": "npm --prefix server run dev",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -20,6 +21,7 @@
   },
   "homepage": "https://github.com/altf4-games/KStrike#readme",
   "dependencies": {
+    "colyseus.js": "^0.16.22",
     "three": "^0.185.1"
   },
   "devDependencies": {

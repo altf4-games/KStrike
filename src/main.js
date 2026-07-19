@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { Client } from "colyseus.js";
 import "./style.css";
 
 const canvas = document.querySelector("#game-canvas");
@@ -172,6 +173,79 @@ const enterButton = document.querySelector("#enter-button");
 const speedReadout = document.querySelector("#movement-readout strong");
 const ammoCount = document.querySelector("#ammo-count");
 const reloadStatus = document.querySelector("#reload-status");
+const networkStatus = document.querySelector("#network-status");
+
+const remotePlayers = new Map();
+let multiplayerRoom;
+let lastNetworkSync = 0;
+
+function createRemotePlayer(nickname) {
+  const avatar = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.32, 0.92, 5, 10),
+    new THREE.MeshStandardMaterial({ color: '#2563eb', roughness: 0.65 }),
+  );
+  body.position.y = 0.78; body.castShadow = true;
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.12, 0.08), new THREE.MeshBasicMaterial({ color: '#b7d5f6' }));
+  visor.position.set(0, 1.08, -0.31);
+  avatar.add(body, visor);
+  avatar.userData.target = new THREE.Vector3();
+  avatar.userData.rotation = 0;
+  avatar.userData.nickname = nickname;
+  scene.add(avatar);
+  return avatar;
+}
+
+function connectToMatch() {
+  if (multiplayerRoom) return;
+  const savedNickname = localStorage.getItem('kstrike-nickname');
+  const nickname = savedNickname || `Player-${Math.floor(1000 + Math.random() * 9000)}`;
+  localStorage.setItem('kstrike-nickname', nickname);
+  const endpoint = import.meta.env.VITE_COLYSEUS_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:2567`;
+  const client = new Client(endpoint);
+  networkStatus.textContent = 'CONNECTING // TRAINING';
+  client.joinOrCreate('deathmatch', { nickname }).then((room) => {
+    multiplayerRoom = room;
+    networkStatus.textContent = `ONLINE // ${room.roomId.slice(0, 5).toUpperCase()}`;
+    room.state.players.onAdd((remote, sessionId) => {
+      if (sessionId === room.sessionId) return;
+      const avatar = createRemotePlayer(remote.nickname);
+      remotePlayers.set(sessionId, avatar);
+      remote.onChange(() => {
+        avatar.userData.target.set(remote.x, remote.y, remote.z);
+        avatar.userData.rotation = remote.rotation;
+      });
+      avatar.userData.target.set(remote.x, remote.y, remote.z);
+      avatar.userData.rotation = remote.rotation;
+    });
+    room.state.players.onRemove((remote, sessionId) => {
+      const avatar = remotePlayers.get(sessionId);
+      if (avatar) { scene.remove(avatar); remotePlayers.delete(sessionId); }
+    });
+    room.onLeave(() => {
+      multiplayerRoom = undefined;
+      networkStatus.textContent = 'OFFLINE // TRAINING';
+      remotePlayers.forEach((avatar) => scene.remove(avatar));
+      remotePlayers.clear();
+    });
+  }).catch(() => { networkStatus.textContent = 'OFFLINE // TRAINING'; });
+}
+
+function syncMultiplayer(now) {
+  if (!multiplayerRoom || now - lastNetworkSync < 50) return;
+  lastNetworkSync = now;
+  multiplayerRoom.send('move', {
+    x: player.position.x, y: player.position.y, z: player.position.z,
+    rotation: player.rotation.y, pitch: pitch.rotation.x,
+  });
+}
+
+function updateRemotePlayers(delta) {
+  remotePlayers.forEach((avatar) => {
+    avatar.position.lerp(avatar.userData.target, 1 - Math.exp(-12 * delta));
+    avatar.rotation.y = THREE.MathUtils.damp(avatar.rotation.y, avatar.userData.rotation, 14, delta);
+  });
+}
 
 // An intentionally lightweight viewmodel: no downloaded assets are needed for the first rifle.
 const weapon = new THREE.Group();
@@ -471,6 +545,7 @@ function movePlayer(delta) {
 }
 
 function lockArena() {
+  connectToMatch();
   canvas.requestPointerLock();
 }
 enterButton.addEventListener("click", lockArena);
@@ -523,6 +598,8 @@ function animate() {
   });
   movePlayer(delta);
   updateWeapon(now, delta);
+  syncMultiplayer(now);
+  updateRemotePlayers(delta);
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
