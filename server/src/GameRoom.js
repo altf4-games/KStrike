@@ -19,6 +19,7 @@ class PlayerState extends Schema {
     this.z = 0;
     this.rotation = 0;
     this.pitch = 0;
+    this.action = 'idle';
     this.health = 100;
     this.kills = 0;
     this.deaths = 0;
@@ -27,7 +28,7 @@ class PlayerState extends Schema {
   }
 }
 defineTypes(PlayerState, {
-  nickname: 'string', x: 'number', y: 'number', z: 'number', rotation: 'number', pitch: 'number',
+  nickname: 'string', x: 'number', y: 'number', z: 'number', rotation: 'number', pitch: 'number', action: 'string',
   health: 'number', kills: 'number', deaths: 'number', alive: 'boolean', respawnSeconds: 'number',
 });
 
@@ -121,6 +122,7 @@ export class GameRoom extends Room {
     if (Number.isFinite(movement.z)) player.z = Math.max(-bounds.z, Math.min(bounds.z, movement.z));
     if (Number.isFinite(movement.rotation)) player.rotation = movement.rotation;
     if (Number.isFinite(movement.pitch)) player.pitch = Math.max(-1.42, Math.min(1.42, movement.pitch));
+    if (['idle', 'walk', 'run', 'crouch', 'jump', 'fire', 'reload'].includes(movement.action)) player.action = movement.action;
   }
 
   applyShot(client, shot) {
@@ -136,7 +138,7 @@ export class GameRoom extends Room {
     target.health = Math.max(0, target.health - (shot.headshot ? 100 : 34));
     this.send(client, 'hit', { headshot: Boolean(shot.headshot) });
     if (target.health === 0) {
-      target.alive = false; target.deaths += 1; target.respawnSeconds = 3;
+      target.alive = false; target.action = 'idle'; target.deaths += 1; target.respawnSeconds = 3;
       attacker.kills += 1;
       this.broadcast('kill', { killer: attacker.nickname, killerId: client.sessionId, victim: target.nickname, headshot: Boolean(shot.headshot) });
     }
@@ -163,7 +165,7 @@ export class GameRoom extends Room {
   spawnPlayer(player) {
     const points = SPAWN_POINTS[this.mapId] || SPAWN_POINTS.d2;
     const [x, z] = points[Math.floor(Math.random() * points.length)];
-    player.x = x; player.y = 0; player.z = z; player.health = 100; player.alive = true; player.respawnSeconds = 0;
+    player.x = x; player.y = 0; player.z = z; player.action = 'idle'; player.health = 100; player.alive = true; player.respawnSeconds = 0;
   }
 
   finishMatch() {

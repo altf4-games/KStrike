@@ -357,6 +357,7 @@ let multiplayerRoom;
 let connectingMatch;
 let lastNetworkSync = 0;
 let localAlive = true;
+let playerAction = 'idle';
 let hitMarkerUntil = 0;
 let screenShake = 0;
 let lastFootstepAt = 0;
@@ -432,23 +433,81 @@ function playGameSound(name, { volume = 0.35, playbackRate = 1 } = {}) {
 
 function createRemotePlayer(nickname) {
   const avatar = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.32, 0.92, 5, 10),
-    new THREE.MeshStandardMaterial({ color: '#2563eb', roughness: 0.65 }),
-  );
-  body.position.y = 0.78; body.castShadow = true;
-  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.12, 0.08), new THREE.MeshBasicMaterial({ color: '#b7d5f6' }));
-  visor.position.set(0, 1.08, -0.31);
-  const rifle = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.11, 0.66), new THREE.MeshStandardMaterial({ color: '#202832', roughness: 0.45, metalness: 0.7 }));
-  rifle.position.set(0.27, 0.68, -0.3); rifle.rotation.x = -0.18;
-  const remoteMuzzle = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), new THREE.MeshBasicMaterial({ color: '#fff1a8' }));
-  remoteMuzzle.position.set(0.27, 0.68, -0.65); remoteMuzzle.visible = false;
-  avatar.add(body, visor, rifle, remoteMuzzle);
+  const uniform = new THREE.MeshStandardMaterial({ color: '#315fbd', roughness: 0.72 });
+  const armor = new THREE.MeshStandardMaterial({ color: '#172333', roughness: 0.52, metalness: 0.15 });
+  const skin = new THREE.MeshStandardMaterial({ color: '#b98363', roughness: 0.9 });
+  const visorMaterial = new THREE.MeshBasicMaterial({ color: '#9eeaff' });
+  const weaponMaterial = new THREE.MeshStandardMaterial({ color: '#242b34', roughness: 0.45, metalness: 0.7 });
+  const cube = (size, material) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
+  };
+  const rig = { arms: [], legs: [], rifle: null };
+  const pelvis = cube([0.54, 0.25, 0.28], armor);
+  pelvis.position.y = 0.91;
+  const torso = cube([0.64, 0.72, 0.34], uniform);
+  torso.position.y = 1.39;
+  const chestPlate = cube([0.5, 0.39, 0.035], armor);
+  chestPlate.position.set(0, 1.42, -0.188);
+  const head = cube([0.47, 0.5, 0.47], skin);
+  head.position.y = 2.03;
+  const helmet = cube([0.51, 0.18, 0.51], armor);
+  helmet.position.y = 2.28;
+  const visor = cube([0.34, 0.11, 0.025], visorMaterial);
+  visor.position.set(0, 2.07, -0.248);
+  avatar.add(pelvis, torso, chestPlate, head, helmet, visor);
+
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Group();
+    leg.position.set(side * 0.19, 0.84, 0);
+    const legBlock = cube([0.23, 0.72, 0.27], uniform);
+    legBlock.position.y = -0.36;
+    const boot = cube([0.25, 0.13, 0.4], armor);
+    boot.position.set(0, -0.69, -0.065);
+    leg.add(legBlock, boot);
+    avatar.add(leg);
+    rig.legs.push(leg);
+
+    const arm = new THREE.Group();
+    // Keep the joint at the actual outer shoulder. The aiming pose below
+    // brings the hands inward, rather than moving the whole shoulder joint.
+    arm.position.set(side * 0.47, 1.66, 0);
+    const upperArm = cube([0.2, 0.64, 0.24], uniform);
+    upperArm.position.y = -0.32;
+    const hand = cube([0.22, 0.16, 0.23], skin);
+    hand.position.y = -0.67;
+    arm.add(upperArm, hand);
+    avatar.add(arm);
+    rig.arms.push(arm);
+  }
+
+  const rifle = new THREE.Group();
+  const rifleBody = cube([0.15, 0.14, 0.72], weaponMaterial);
+  rifleBody.position.z = -0.25;
+  const stock = cube([0.18, 0.19, 0.22], armor);
+  stock.position.set(0, -0.06, 0.13);
+  const barrel = cube([0.07, 0.07, 0.35], weaponMaterial);
+  barrel.position.set(0, 0.015, -0.76);
+  rifle.add(rifleBody, stock, barrel);
+  rifle.position.set(-0.08, -0.68, -0.1);
+  rifle.rotation.x = 0;
+  rig.arms[1].add(rifle);
+  rig.rifle = rifle;
+  const remoteMuzzle = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 8), new THREE.MeshBasicMaterial({ color: '#fff1a8' }));
+  remoteMuzzle.position.set(0, 0.015, -0.98);
+  remoteMuzzle.visible = false;
+  rifle.add(remoteMuzzle);
   avatar.userData.target = new THREE.Vector3();
   avatar.userData.rotation = 0;
+  avatar.userData.pitch = 0;
   avatar.userData.nickname = nickname;
   avatar.userData.muzzle = remoteMuzzle;
   avatar.userData.shotUntil = 0;
+  avatar.userData.action = 'idle';
+  avatar.userData.animationTime = Math.random() * Math.PI * 2;
+  avatar.userData.rig = rig;
   scene.add(avatar);
   return avatar;
 }
@@ -562,10 +621,14 @@ async function startMatchConnection(options = {}) {
         $(remote).onChange(() => {
           avatar.userData.target.set(remote.x, remote.y, remote.z);
           avatar.userData.rotation = remote.rotation;
+          avatar.userData.pitch = remote.pitch || 0;
+          avatar.userData.action = remote.action || 'idle';
           avatar.visible = remote.alive;
         });
         avatar.userData.target.set(remote.x, remote.y, remote.z);
         avatar.userData.rotation = remote.rotation;
+        avatar.userData.pitch = remote.pitch || 0;
+        avatar.userData.action = remote.action || 'idle';
         avatar.visible = remote.alive;
       }, true);
       $(room.state).players.onRemove((remote, sessionId) => {
@@ -647,7 +710,7 @@ function syncMultiplayer(now) {
   lastNetworkSync = now;
   multiplayerRoom.send('move', {
     x: player.position.x, y: player.position.y, z: player.position.z,
-    rotation: player.rotation.y, pitch: pitch.rotation.x,
+    rotation: player.rotation.y, pitch: pitch.rotation.x, action: playerAction,
   });
 }
 
@@ -656,6 +719,39 @@ function updateRemotePlayers(delta) {
     avatar.position.lerp(avatar.userData.target, 1 - Math.exp(-12 * delta));
     avatar.rotation.y = THREE.MathUtils.damp(avatar.rotation.y, avatar.userData.rotation, 14, delta);
     avatar.userData.muzzle.visible = performance.now() < avatar.userData.shotUntil;
+    const { arms, legs, rifle } = avatar.userData.rig;
+    const action = avatar.userData.action;
+    const animationSpeed = action === 'run' ? 15 : action === 'walk' ? 10 : 3;
+    avatar.userData.animationTime += delta * animationSpeed;
+    const phase = Math.sin(avatar.userData.animationTime);
+    const moving = action === 'walk' || action === 'run';
+    const stride = moving ? phase * (action === 'run' ? 0.82 : 0.53) : 0;
+    // Hold a two-handed, shouldered rifle stance instead of letting arms hang
+    // at the sides. Small opposing motion keeps locomotion readable.
+    let leftArm = 0.82 + (moving ? -stride * 0.22 : Math.sin(avatar.userData.animationTime) * 0.035);
+    let rightArm = 1.1 + (moving ? stride * 0.16 : Math.sin(avatar.userData.animationTime + 0.3) * 0.03);
+    let leftLeg = stride;
+    let rightLeg = -stride;
+    if (action === 'crouch') { leftLeg = 0.48; rightLeg = 0.48; leftArm = 0.62; rightArm = 0.94; }
+    if (action === 'jump') { leftLeg = -0.6; rightLeg = -0.6; leftArm = 1.04; rightArm = 1.25; }
+    if (action === 'fire') { leftArm = 0.95; rightArm = 1.28; }
+    if (action === 'reload') { leftArm = 0.48; rightArm = 0.82; }
+    arms[0].rotation.x = THREE.MathUtils.damp(arms[0].rotation.x, leftArm, 18, delta);
+    arms[1].rotation.x = THREE.MathUtils.damp(arms[1].rotation.x, rightArm, 18, delta);
+    // Angle each arm toward the rifle: shoulders stay fixed on the torso,
+    // while the hands meet at centre in a natural two-handed stance.
+    arms[0].rotation.z = THREE.MathUtils.damp(arms[0].rotation.z, 0.52, 18, delta);
+    arms[1].rotation.z = THREE.MathUtils.damp(arms[1].rotation.z, -0.52, 18, delta);
+    legs[0].rotation.x = THREE.MathUtils.damp(legs[0].rotation.x, leftLeg, 16, delta);
+    legs[1].rotation.x = THREE.MathUtils.damp(legs[1].rotation.x, rightLeg, 16, delta);
+    // The rifle lives on the weapon arm, so cancel that limb's pose before
+    // applying the replicated camera pitch. This keeps the barrel on target.
+    rifle.rotation.x = THREE.MathUtils.damp(
+      rifle.rotation.x,
+      THREE.MathUtils.clamp(avatar.userData.pitch, -0.85, 0.65) - arms[1].rotation.x,
+      20,
+      delta,
+    );
   });
 }
 playAgainButton.addEventListener('click', () => { matchResult.hidden = true; });
@@ -769,6 +865,7 @@ function playWeaponSound(reload = false) {
 function startReload(now = performance.now()) {
   if (reloading || magazine === 30 || reserveAmmo === 0) return;
   reloading = true;
+  playerAction = 'reload';
   reloadCompleteAt = now + 1200;
   reloadStatus.textContent = "RELOADING";
   playWeaponSound(true);
@@ -794,6 +891,7 @@ function fire(now) {
     return;
   }
   lastShotAt = now;
+  playerAction = 'fire';
   magazine -= 1;
   updateAmmo();
   playWeaponSound();
@@ -993,6 +1091,12 @@ function movePlayer(delta) {
     horizontalVelocity.x,
     horizontalVelocity.z,
   );
+  if (!grounded) playerAction = 'jump';
+  else if (reloading) playerAction = 'reload';
+  else if (triggerHeld && locked) playerAction = 'fire';
+  else if (crouching) playerAction = 'crouch';
+  else if (horizontalSpeed > 0.25) playerAction = sprinting ? 'run' : 'walk';
+  else playerAction = 'idle';
   if (grounded && horizontalSpeed > 0.1)
     bobTime += delta * (sprinting ? 13 : crouching ? 7 : 10);
   if (locked && grounded && horizontalSpeed > 1 && performance.now() - lastFootstepAt > (sprinting ? 300 : 430)) {
