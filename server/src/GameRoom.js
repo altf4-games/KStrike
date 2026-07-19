@@ -52,6 +52,7 @@ export class GameRoom extends Room {
     this.setMetadata({ roomCode: this.roomCode, isPrivate: this.isPrivate, maxPlayers: this.maxClients });
     this.onMessage('move', (client, movement) => this.updatePlayer(client, movement));
     this.onMessage('shoot', (client, shot) => this.applyShot(client, shot));
+    this.onMessage('fire', (client) => this.broadcastFire(client));
     this.onMessage('rename', (client, nickname) => {
       const player = this.state.players.get(client.sessionId);
       if (player) player.nickname = this.sanitizeNickname(nickname);
@@ -64,10 +65,25 @@ export class GameRoom extends Room {
     player.nickname = this.sanitizeNickname(options?.nickname);
     this.spawnPlayer(player);
     this.state.players.set(client.sessionId, player);
+    this.refreshMatchState();
   }
 
   onLeave(client) {
     this.state.players.delete(client.sessionId);
+    this.refreshMatchState();
+  }
+
+  refreshMatchState() {
+    if (this.state.status === 'FINISHED') return;
+    if (this.clients.length < 2) {
+      this.state.status = 'WAITING';
+      this.state.countdown = 10;
+      return;
+    }
+    if (this.state.status === 'WAITING') {
+      this.state.status = 'STARTING';
+      this.state.countdown = 10;
+    }
   }
 
   updateMatchCountdown() {
@@ -78,12 +94,8 @@ export class GameRoom extends Room {
       return;
     }
     if (this.state.status === 'FINISHED') return;
-    if (this.clients.length < 2) {
-      this.state.status = 'WAITING';
-      this.state.countdown = 10;
-      return;
-    }
-    this.state.status = 'STARTING';
+    this.refreshMatchState();
+    if (this.state.status === 'WAITING') return;
     this.state.countdown -= 1;
     if (this.state.countdown <= 0) {
       this.state.status = 'LIVE';
@@ -114,11 +126,21 @@ export class GameRoom extends Room {
     const distance = Math.hypot(attacker.x - target.x, attacker.y - target.y, attacker.z - target.z);
     if (distance > 36) return;
     target.health = Math.max(0, target.health - (shot.headshot ? 100 : 34));
+    this.send(client, 'hit', { headshot: Boolean(shot.headshot) });
     if (target.health === 0) {
       target.alive = false; target.deaths += 1; target.respawnSeconds = 3;
       attacker.kills += 1;
-      this.broadcast('kill', { killer: attacker.nickname, victim: target.nickname, headshot: Boolean(shot.headshot) });
+      this.broadcast('kill', { killer: attacker.nickname, killerId: client.sessionId, victim: target.nickname, headshot: Boolean(shot.headshot) });
     }
+  }
+
+  broadcastFire(client) {
+    if (this.state.status !== 'LIVE') return;
+    const now = Date.now();
+    if (!client.userData) client.userData = {};
+    if (now - (client.userData.lastVisualShotAt || 0) < 80) return;
+    client.userData.lastVisualShotAt = now;
+    this.broadcast('fire', { sessionId: client.sessionId }, { except: client });
   }
 
   updateRespawns() {

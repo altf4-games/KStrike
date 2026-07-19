@@ -179,7 +179,13 @@ const matchTimer = document.querySelector('#match-timer');
 const killFeed = document.querySelector('#kill-feed');
 const matchResult = document.querySelector('#match-result');
 const winnerName = document.querySelector('#winner-name');
+const resultScores = document.querySelector('#result-scores');
 const playAgainButton = document.querySelector('#play-again-button');
+const roomOverlay = document.querySelector('#room-overlay');
+const hitMarker = document.querySelector('#hit-marker');
+const scoreboard = document.querySelector('#scoreboard');
+const scoreboardRoom = document.querySelector('#scoreboard-room');
+const scoreboardPlayers = document.querySelector('#scoreboard-players');
 const lobby = document.querySelector('#lobby-screen');
 const lobbyStatus = document.querySelector('#lobby-status');
 const nicknameInput = document.querySelector('#nickname-input');
@@ -190,8 +196,31 @@ const joinRoomButton = document.querySelector('#join-room-button');
 
 const remotePlayers = new Map();
 let multiplayerRoom;
+let connectingMatch;
 let lastNetworkSync = 0;
 let localAlive = true;
+let hitMarkerUntil = 0;
+let screenShake = 0;
+let lastFootstepAt = 0;
+
+const soundAssets = {
+  fire: '/assets/audio/Rifle_Fire.wav',
+  reload: '/assets/audio/Rifle_Reload.wav',
+  hit: '/assets/audio/Hit_Marker.wav',
+  death: '/assets/audio/Player_Death.wav',
+  footsteps: ['/assets/audio/Footstep_01.wav', '/assets/audio/Footstep_02.wav'],
+};
+
+function playGameSound(name, { volume = 0.35, playbackRate = 1 } = {}) {
+  const source = name === 'footsteps'
+    ? soundAssets.footsteps[Math.floor(Math.random() * soundAssets.footsteps.length)]
+    : soundAssets[name];
+  if (!source) return;
+  const sound = new Audio(source);
+  sound.volume = volume;
+  sound.playbackRate = playbackRate;
+  sound.play().catch(() => {});
+}
 
 function createRemotePlayer(nickname) {
   const avatar = new THREE.Group();
@@ -202,10 +231,16 @@ function createRemotePlayer(nickname) {
   body.position.y = 0.78; body.castShadow = true;
   const visor = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.12, 0.08), new THREE.MeshBasicMaterial({ color: '#b7d5f6' }));
   visor.position.set(0, 1.08, -0.31);
-  avatar.add(body, visor);
+  const rifle = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.11, 0.66), new THREE.MeshStandardMaterial({ color: '#202832', roughness: 0.45, metalness: 0.7 }));
+  rifle.position.set(0.27, 0.68, -0.3); rifle.rotation.x = -0.18;
+  const remoteMuzzle = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), new THREE.MeshBasicMaterial({ color: '#fff1a8' }));
+  remoteMuzzle.position.set(0.27, 0.68, -0.65); remoteMuzzle.visible = false;
+  avatar.add(body, visor, rifle, remoteMuzzle);
   avatar.userData.target = new THREE.Vector3();
   avatar.userData.rotation = 0;
   avatar.userData.nickname = nickname;
+  avatar.userData.muzzle = remoteMuzzle;
+  avatar.userData.shotUntil = 0;
   scene.add(avatar);
   return avatar;
 }
@@ -215,29 +250,65 @@ function updateCombatHud() {
   const state = multiplayerRoom.state;
   const local = state.players.get(multiplayerRoom.sessionId);
   if (local) {
+    const justDied = localAlive && !local.alive;
     const justRespawned = !localAlive && local.alive;
     localAlive = local.alive;
     healthCount.textContent = local.alive ? local.health : `R${local.respawnSeconds}`;
+    if (justDied) playGameSound('death', { volume: 0.42 });
     if (justRespawned) {
       player.position.set(local.x, local.y, local.z);
       playerVelocity.set(0, 0, 0); horizontalVelocity.set(0, 0, 0);
     }
   }
-  const minutes = Math.floor(Math.max(0, state.matchTime || 0) / 60);
-  const seconds = Math.max(0, state.matchTime || 0) % 60;
-  matchTimer.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-  if (state.status === 'FINISHED') { winnerName.textContent = state.winner || 'NO WINNER'; matchResult.hidden = false; }
+  if (state.status === 'WAITING') matchTimer.textContent = 'WAITING FOR PLAYER';
+  else if (state.status === 'STARTING') matchTimer.textContent = `STARTS ${state.countdown}`;
+  else {
+    const minutes = Math.floor(Math.max(0, state.matchTime || 0) / 60);
+    const seconds = Math.max(0, state.matchTime || 0) % 60;
+    matchTimer.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  if (state.status === 'FINISHED') showMatchResult(state.winner);
+}
+
+function showMatchResult(winner) {
+  winnerName.textContent = winner || 'NO WINNER';
+  const players = [...multiplayerRoom.state.players.values()].sort((a, b) => b.kills - a.kills);
+  resultScores.innerHTML = players.map((remote, index) => `<p><span>${index + 1}. ${remote.nickname}</span><b>${remote.kills} K / ${remote.deaths} D</b></p>`).join('');
+  matchResult.hidden = false;
 }
 
 function addKillFeed(message) {
   const item = document.createElement('p');
   item.innerHTML = `<b>${message.killer}</b> <i>${message.headshot ? 'HEADSHOT' : 'ELIMINATED'}</i> ${message.victim}`;
   killFeed.prepend(item);
+  if (message.killerId === multiplayerRoom?.sessionId) {
+    reserveAmmo = Math.min(180, reserveAmmo + 30);
+    updateAmmo();
+  }
   window.setTimeout(() => item.remove(), 4500);
 }
 
-async function connectToMatch(options = {}) {
-  if (multiplayerRoom) return multiplayerRoom;
+function renderScoreboard() {
+  if (!multiplayerRoom?.state) return;
+  const rows = [...multiplayerRoom.state.players.entries()]
+    .sort(([, a], [, b]) => b.kills - a.kills)
+    .map(([sessionId, remote]) => `<div class="scoreboard__row${sessionId === multiplayerRoom.sessionId ? ' scoreboard__row--self' : ''}"><span>${remote.nickname}</span><span>${remote.kills}</span><span>${remote.deaths}</span><span>${remote.alive ? remote.health : 'RESPAWN'}</span></div>`)
+    .join('');
+  scoreboardPlayers.innerHTML = '<div class="scoreboard__row"><span>PLAYER</span><span>KILLS</span><span>DEATHS</span><span>STATUS</span></div>' + rows;
+}
+
+function playFootstep() {
+  playGameSound('footsteps', { volume: 0.12, playbackRate: 0.96 + Math.random() * 0.08 });
+}
+
+function connectToMatch(options = {}) {
+  if (multiplayerRoom) return Promise.resolve(multiplayerRoom);
+  if (connectingMatch) return connectingMatch;
+  connectingMatch = startMatchConnection(options).finally(() => { connectingMatch = undefined; });
+  return connectingMatch;
+}
+
+async function startMatchConnection(options = {}) {
   const savedNickname = localStorage.getItem('kstrike-nickname');
   const nickname = nicknameInput.value.trim() || savedNickname || `Player-${Math.floor(1000 + Math.random() * 9000)}`;
   localStorage.setItem('kstrike-nickname', nickname);
@@ -281,10 +352,24 @@ async function connectToMatch(options = {}) {
       remotePlayers.clear();
     });
     room.onMessage('kill', addKillFeed);
-    room.onMessage('match-ended', ({ winner }) => { winnerName.textContent = winner; matchResult.hidden = false; });
+    room.onMessage('hit', () => {
+      hitMarkerUntil = performance.now() + 120;
+      screenShake = 1;
+      playGameSound('hit', { volume: 0.24 });
+    });
+    room.onMessage('match-ended', ({ winner }) => showMatchResult(winner));
+    room.onMessage('fire', ({ sessionId }) => {
+      const avatar = remotePlayers.get(sessionId);
+      if (avatar) {
+        avatar.userData.shotUntil = performance.now() + 90;
+        playGameSound('fire', { volume: 0.1 });
+      }
+    });
     // For newly created private rooms, use the requested code immediately.
     // State hydration can lag the join response by one network tick.
     const roomLabel = options.roomCode || room.state.roomCode;
+    roomOverlay.textContent = roomLabel ? `ROOM // ${roomLabel}` : `ROOM // ${room.roomId.slice(0, 6).toUpperCase()}`;
+    scoreboardRoom.textContent = roomOverlay.textContent;
     intro.querySelector('.eyebrow').textContent = roomLabel
       ? `PRIVATE ROOM CODE // ${roomLabel}`
       : `PUBLIC MATCH // ${room.roomId.slice(0, 6).toUpperCase()}`;
@@ -328,6 +413,7 @@ function updateRemotePlayers(delta) {
   remotePlayers.forEach((avatar) => {
     avatar.position.lerp(avatar.userData.target, 1 - Math.exp(-12 * delta));
     avatar.rotation.y = THREE.MathUtils.damp(avatar.rotation.y, avatar.userData.rotation, 14, delta);
+    avatar.userData.muzzle.visible = performance.now() < avatar.userData.shotUntil;
   });
 }
 playAgainButton.addEventListener('click', () => { matchResult.hidden = true; });
@@ -431,29 +517,12 @@ let triggerHeld = false;
 let lastShotAt = 0;
 let weaponKick = 0;
 let muzzleUntil = 0;
-let audioContext;
 
 function updateAmmo() {
   ammoCount.innerHTML = `${magazine} <i>/</i> ${reserveAmmo}`;
 }
 function playWeaponSound(reload = false) {
-  const Audio = window.AudioContext || window.webkitAudioContext;
-  if (!Audio) return;
-  if (!audioContext) audioContext = new Audio();
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-  const now = audioContext.currentTime;
-  oscillator.type = reload ? "triangle" : "square";
-  oscillator.frequency.setValueAtTime(reload ? 210 : 115, now);
-  oscillator.frequency.exponentialRampToValueAtTime(
-    reload ? 320 : 58,
-    now + (reload ? 0.09 : 0.055),
-  );
-  gain.gain.setValueAtTime(reload ? 0.045 : 0.035, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + (reload ? 0.1 : 0.06));
-  oscillator.connect(gain).connect(audioContext.destination);
-  oscillator.start(now);
-  oscillator.stop(now + (reload ? 0.11 : 0.07));
+  playGameSound(reload ? 'reload' : 'fire', { volume: reload ? 0.42 : 0.3 });
 }
 function startReload(now = performance.now()) {
   if (reloading || magazine === 30 || reserveAmmo === 0) return;
@@ -489,6 +558,7 @@ function fire(now) {
   weaponKick = 1;
   muzzleUntil = now + 80;
   muzzleFlash.visible = true;
+  multiplayerRoom?.send('fire');
   pitch.rotation.x = THREE.MathUtils.clamp(
     pitch.rotation.x + 0.009,
     -1.42,
@@ -528,6 +598,8 @@ function updateWeapon(now, delta) {
   weaponKick = THREE.MathUtils.damp(weaponKick, 0, 16, delta);
   weapon.position.z = -0.58 + weaponKick * 0.085;
   weapon.rotation.x = -0.08 - weaponKick * 0.13;
+  screenShake = THREE.MathUtils.damp(screenShake, 0, 18, delta);
+  camera.position.x = Math.sin(now * 0.08) * screenShake * 0.012;
   muzzleFlash.visible = now < muzzleUntil;
   muzzleLight.intensity = muzzleFlash.visible ? 5 : 0;
   for (let index = decals.length - 1; index >= 0; index -= 1)
@@ -618,6 +690,10 @@ function movePlayer(delta) {
   );
   if (grounded && horizontalSpeed > 0.1)
     bobTime += delta * (sprinting ? 13 : crouching ? 7 : 10);
+  if (locked && grounded && horizontalSpeed > 1 && performance.now() - lastFootstepAt > (sprinting ? 300 : 430)) {
+    lastFootstepAt = performance.now();
+    playFootstep();
+  }
   const bobAmount = grounded
     ? Math.sin(bobTime) * Math.min(horizontalSpeed / sprintSpeed, 1) * 0.026
     : 0;
@@ -665,12 +741,13 @@ document.addEventListener("mousemove", (event) => {
   );
 });
 window.addEventListener("keydown", (event) => {
-  if (["Space", "ArrowUp", "ArrowDown"].includes(event.code))
+  if (["Space", "ArrowUp", "ArrowDown", "Tab"].includes(event.code))
     event.preventDefault();
   keys.add(event.code);
   if (event.code === "KeyR" && !event.repeat) startReload();
+  if (event.code === 'Tab') { renderScoreboard(); scoreboard.hidden = false; }
 });
-window.addEventListener("keyup", (event) => keys.delete(event.code));
+window.addEventListener("keyup", (event) => { keys.delete(event.code); if (event.code === 'Tab') scoreboard.hidden = true; });
 window.addEventListener("blur", () => keys.clear());
 window.addEventListener("mousedown", (event) => {
   if (event.button === 0) triggerHeld = true;
@@ -695,6 +772,8 @@ function animate() {
   syncMultiplayer(now);
   updateRemotePlayers(delta);
   updateCombatHud();
+  hitMarker.classList.toggle('hit-marker--active', now < hitMarkerUntil);
+  if (!scoreboard.hidden) renderScoreboard();
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
