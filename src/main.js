@@ -87,6 +87,16 @@ let d2MapModel;
 let d2MapLoaded = false;
 let d2CollisionBVH;
 const D2_MODEL_SCALE = 1.5;
+let initialD2LoadSettled = false;
+let minimumLoadingTimeElapsed = false;
+
+function finishInitialLoadingWhenReady() {
+  const needsD2 = selectedMapId === 'd2';
+  if (!minimumLoadingTimeElapsed || (needsD2 && !initialD2LoadSettled)) return;
+  document.querySelector('#loading-screen').classList.add('loading--done');
+  nicknameInput.value = localStorage.getItem('kstrike-nickname') || '';
+  lobby.hidden = false;
+}
 
 function clearArena() {
   colliders.length = 0;
@@ -258,13 +268,19 @@ function loadD2MapModel() {
       // The GLB collider replaces the temporary D2 blockout boxes completely.
       colliders.length = 0;
       d2MapLoaded = true;
+      initialD2LoadSettled = true;
       if (activeMapId === 'd2') {
         showD2MapModel();
         snapPlayerToMapGround();
       }
+      finishInitialLoadingWhenReady();
     },
     undefined,
-    (error) => console.warn('D2 map model failed to load; using the blockout fallback.', error),
+    (error) => {
+      initialD2LoadSettled = true;
+      console.warn('D2 map model failed to load; using the blockout fallback.', error);
+      finishInitialLoadingWhenReady();
+    },
   );
 }
 
@@ -1101,7 +1117,6 @@ window.addEventListener("resize", () => {
 });
 
 window.setTimeout(() => {
-  document.querySelector("#loading-screen").classList.add("loading--done");
-  nicknameInput.value = localStorage.getItem('kstrike-nickname') || '';
-  lobby.hidden = false;
+  minimumLoadingTimeElapsed = true;
+  finishInitialLoadingWhenReady();
 }, 700);
