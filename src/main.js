@@ -17,6 +17,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.15;
+renderer.autoClear = false;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#0f1115");
@@ -28,13 +29,34 @@ const camera = new THREE.PerspectiveCamera(
   0.005,
   180,
 );
+// The viewmodel is rendered in a separate pass after the world. It gets its
+// own depth buffer, so level geometry can never clip the first-person weapon.
+const viewModelScene = new THREE.Scene();
+const viewModelCamera = new THREE.PerspectiveCamera(
+  55,
+  window.innerWidth / window.innerHeight,
+  0.01,
+  10,
+);
+// The viewmodel does not share the map scene, so give it a small studio-light
+// rig. This keeps imported PBR weapon materials readable in dark map areas.
+viewModelScene.add(new THREE.HemisphereLight('#e9f4ff', '#26313d', 3.4));
+viewModelScene.add(new THREE.AmbientLight('#dbeaff', 1.15));
+const viewModelKeyLight = new THREE.DirectionalLight('#ffffff', 3.2);
+viewModelKeyLight.position.set(-2, 3, 2);
+const viewModelFillLight = new THREE.PointLight('#b8d8ff', 14, 4, 2);
+viewModelFillLight.position.set(0.8, 0.35, 0.5);
+viewModelScene.add(viewModelKeyLight, viewModelFillLight);
 const player = new THREE.Group();
 const pitch = new THREE.Group();
 player.position.set(12, 0, 10);
 pitch.add(camera);
 player.add(pitch);
 scene.add(player);
-camera.position.set(0, 1.68, 0);
+// Rotate view around the eye itself. Keeping the pitch pivot at the player's
+// feet made looking down swing the camera forward through nearby walls.
+pitch.position.set(0, 1.68, 0);
+camera.position.set(0, 0, 0);
 
 const ambient = new THREE.HemisphereLight("#b7d5f6", "#14221d", 1.45);
 scene.add(ambient);
@@ -375,6 +397,7 @@ let soloHealth = 100;
 let soloKills = 0;
 let soloDeaths = 0;
 let soloRespawnAt = 0;
+let soloSpawnShieldUntil = 0;
 let soloMatchEndsAt = 0;
 let soloMatchFinished = false;
 const soloBots = [];
@@ -884,6 +907,7 @@ function spawnSoloBots() {
       deaths: 0,
       alive: true,
       respawnAt: 0,
+      spawnShieldUntil: 0,
       lastShotAt: performance.now() + index * 260,
     };
     avatar.position.copy(bot.spawn);
@@ -896,7 +920,7 @@ function spawnSoloBots() {
 }
 
 function damageSoloBot(bot, headshot) {
-  if (!singlePlayerMode || !bot.alive) return;
+  if (!singlePlayerMode || !bot.alive || performance.now() < bot.spawnShieldUntil) return;
   bot.health -= headshot ? 100 : activeWeapon === 'shotgun' ? 15 : 34;
   hitMarkerUntil = performance.now() + 120;
   screenShake = 1;
@@ -915,7 +939,7 @@ function damageSoloBot(bot, headshot) {
 }
 
 function damageSoloPlayer(amount, attacker) {
-  if (!singlePlayerMode || !localAlive) return;
+  if (!singlePlayerMode || !localAlive || performance.now() < soloSpawnShieldUntil) return;
   soloHealth = Math.max(0, soloHealth - amount);
   healthCount.textContent = soloHealth;
   screenShake = 1;
@@ -959,6 +983,7 @@ function updateSoloBots(now, delta) {
     soloHealth = 100;
     healthCount.textContent = soloHealth;
     localAlive = true;
+    soloSpawnShieldUntil = now + 2000;
     deathScreen.hidden = true;
     addSoloFeed('RESPAWNED');
   }
@@ -967,6 +992,7 @@ function updateSoloBots(now, delta) {
       if (now < bot.respawnAt) return;
       bot.health = 100;
       bot.alive = true;
+      bot.spawnShieldUntil = now + 2000;
       bot.avatar.visible = true;
       bot.avatar.position.copy(bot.spawn);
       bot.avatar.userData.target.copy(bot.spawn);
@@ -1053,7 +1079,7 @@ muzzleLight.position.copy(muzzleFlash.position);
 weapon.add(muzzleLight);
 weapon.position.set(0.42, -0.34, -0.58);
 weapon.rotation.set(-0.08, -0.16, 0);
-camera.add(weapon);
+viewModelScene.add(weapon);
 // Fine-tune the custom rifle effect here: X = right/left, Y = up/down, Z = toward/away from camera.
 const muzzleOffset = new THREE.Vector3(0, -0.1, -1.1);
 
@@ -1328,15 +1354,20 @@ function updateWeapon(now, delta) {
 
 function blocksPositionAt(position, x, z, radius = playerRadius) {
   if (activeMapId === 'd2' && d2CollisionBVH) {
-    const origin = new THREE.Vector3(position.x, position.y + 1.05, position.z);
-    const movement = new THREE.Vector3(x - origin.x, 0, z - origin.z);
+    const movement = new THREE.Vector3(x - position.x, 0, z - position.z);
     const distance = movement.length();
     if (distance <= 0.0001) return false;
-    const hits = d2CollisionBVH.raycast(new THREE.Ray(origin, movement.normalize()), THREE.DoubleSide);
-    return hits.some((hit) => (
-      hit.distance <= distance + radius
-      && Math.abs(hit.face.normal.y) < 0.65
-    ));
+    const direction = movement.normalize();
+    // Test feet, torso, and eye height. A single centre probe allowed the
+    // camera to cross thin/low wall sections when looking downward.
+    return [0.48, 1.08, 1.66].some((height) => {
+      const origin = new THREE.Vector3(position.x, position.y + height, position.z);
+      const hits = d2CollisionBVH.raycast(new THREE.Ray(origin, direction), THREE.DoubleSide);
+      return hits.some((hit) => (
+        hit.distance <= distance + radius
+        && Math.abs(hit.face.normal.y) < 0.65
+      ));
+    });
   }
   return colliders.some((collider) => {
     const closestX = THREE.MathUtils.clamp(x, collider.minX, collider.maxX);
@@ -1535,8 +1566,8 @@ function movePlayer(delta) {
     ? Math.sin(bobTime) * Math.min(horizontalSpeed / sprintSpeed, 1) * 0.026
     : 0;
   const targetHeight = crouching ? crouchHeight : standHeight;
-  camera.position.y = THREE.MathUtils.damp(
-    camera.position.y,
+  pitch.position.y = THREE.MathUtils.damp(
+    pitch.position.y,
     targetHeight + bobAmount,
     18,
     delta,
@@ -1658,7 +1689,10 @@ function animate() {
   updateCombatHud();
   hitMarker.classList.toggle('hit-marker--active', now < hitMarkerUntil);
   if (!scoreboard.hidden) renderScoreboard();
+  renderer.clear();
   renderer.render(scene, camera);
+  renderer.clearDepth();
+  renderer.render(viewModelScene, viewModelCamera);
   requestAnimationFrame(animate);
 }
 animate();
@@ -1666,6 +1700,8 @@ animate();
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  viewModelCamera.aspect = window.innerWidth / window.innerHeight;
+  viewModelCamera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 

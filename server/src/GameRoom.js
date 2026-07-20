@@ -27,11 +27,12 @@ class PlayerState extends Schema {
     this.deaths = 0;
     this.alive = true;
     this.respawnSeconds = 0;
+    this.spawnShieldSeconds = 0;
   }
 }
 defineTypes(PlayerState, {
   nickname: 'string', x: 'number', y: 'number', z: 'number', rotation: 'number', pitch: 'number', action: 'string', weapon: 'string',
-  health: 'number', kills: 'number', deaths: 'number', alive: 'boolean', respawnSeconds: 'number',
+  health: 'number', kills: 'number', deaths: 'number', alive: 'boolean', respawnSeconds: 'number', spawnShieldSeconds: 'number',
 });
 
 class GameState extends Schema {
@@ -156,7 +157,7 @@ export class GameRoom extends Room {
     for (const impact of impacts) {
       if (!impact?.targetId || impact.targetId === client.sessionId) continue;
       const target = this.state.players.get(impact.targetId);
-      if (!target?.alive) continue;
+      if (!target?.alive || target.spawnShieldSeconds > 0) continue;
       const distance = Math.hypot(attacker.x - target.x, attacker.y - target.y, attacker.z - target.z);
       if (distance > (weapon === 'shotgun' ? 16 : 36)) continue;
       const headshot = Boolean(impact.headshot);
@@ -183,6 +184,7 @@ export class GameRoom extends Room {
 
   updateRespawns() {
     this.state.players.forEach((player) => {
+      if (player.alive && player.spawnShieldSeconds > 0) player.spawnShieldSeconds -= 1;
       if (!player.alive && player.respawnSeconds > 0) {
         player.respawnSeconds -= 1;
         if (player.respawnSeconds === 0) this.spawnPlayer(player);
@@ -197,7 +199,7 @@ export class GameRoom extends Room {
     const point = points[this.spawnIndex % points.length];
     this.spawnIndex += 1;
     const [x, spawnY = 0, z] = point.length === 3 ? point : [point[0], 0, point[1]];
-    player.x = x; player.y = spawnY; player.z = z; player.action = 'idle'; player.weapon = 'rifle'; player.health = 100; player.alive = true; player.respawnSeconds = 0;
+    player.x = x; player.y = spawnY; player.z = z; player.action = 'idle'; player.weapon = 'rifle'; player.health = 100; player.alive = true; player.respawnSeconds = 0; player.spawnShieldSeconds = 2;
   }
 
   finishMatch() {
