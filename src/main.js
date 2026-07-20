@@ -975,6 +975,7 @@ function updateSoloBots(now, delta) {
     }
     const toPlayer = player.position.clone().sub(bot.avatar.position);
     const distance = Math.hypot(toPlayer.x, toPlayer.z);
+    const canSeePlayer = distance < 22 && botHasLineOfSight(bot);
     // Keep every offline opponent visibly moving even when the player is far
     // away, then have it run toward the player once they are nearby.
     if (distance >= 22) {
@@ -985,18 +986,21 @@ function updateSoloBots(now, delta) {
         bot.spawn.z + Math.cos(patrolTime * 0.8) * 3.2,
       );
     }
-    const goal = distance < 22 ? player.position : bot.patrol;
+    const goal = canSeePlayer ? player.position : bot.patrol;
     const directionToGoal = goal.clone().sub(bot.avatar.position);
     directionToGoal.y = 0;
     if (directionToGoal.lengthSq() > 0.3) {
       directionToGoal.normalize();
-      const speed = distance < 22 ? 3.1 : 2;
-      bot.avatar.position.addScaledVector(directionToGoal, speed * delta);
+      const speed = canSeePlayer ? 3.1 : 2;
+      moveBotWithCollision(bot, directionToGoal, speed, delta);
       bot.avatar.userData.target.copy(bot.avatar.position);
       bot.avatar.userData.rotation = Math.atan2(-directionToGoal.x, -directionToGoal.z);
-      bot.avatar.userData.action = distance < 19 ? 'run' : 'walk';
+      bot.avatar.userData.action = canSeePlayer ? 'run' : 'walk';
     } else bot.avatar.userData.action = 'idle';
-    if (localAlive && distance < 18 && now - bot.lastShotAt > 850) {
+    const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(up, bot.avatar.userData.rotation);
+    const flatToPlayer = toPlayer.setY(0).normalize();
+    const playerInViewCone = forward.dot(flatToPlayer) > Math.cos(Math.PI / 3);
+    if (localAlive && canSeePlayer && playerInViewCone && distance < 18 && now - bot.lastShotAt > 850) {
       bot.lastShotAt = now;
       bot.avatar.userData.action = 'fire';
       bot.avatar.userData.shotUntil = now + 90;
@@ -1322,15 +1326,15 @@ function updateWeapon(now, delta) {
     }
 }
 
-function blocksPosition(x, z) {
+function blocksPositionAt(position, x, z, radius = playerRadius) {
   if (activeMapId === 'd2' && d2CollisionBVH) {
-    const origin = new THREE.Vector3(player.position.x, player.position.y + 1.05, player.position.z);
+    const origin = new THREE.Vector3(position.x, position.y + 1.05, position.z);
     const movement = new THREE.Vector3(x - origin.x, 0, z - origin.z);
     const distance = movement.length();
     if (distance <= 0.0001) return false;
     const hits = d2CollisionBVH.raycast(new THREE.Ray(origin, movement.normalize()), THREE.DoubleSide);
     return hits.some((hit) => (
-      hit.distance <= distance + playerRadius
+      hit.distance <= distance + radius
       && Math.abs(hit.face.normal.y) < 0.65
     ));
   }
@@ -1339,7 +1343,50 @@ function blocksPosition(x, z) {
     const closestZ = THREE.MathUtils.clamp(z, collider.minZ, collider.maxZ);
     const dx = x - closestX;
     const dz = z - closestZ;
-    return dx * dx + dz * dz < playerRadius * playerRadius;
+    return dx * dx + dz * dz < radius * radius;
+  });
+}
+
+function blocksPosition(x, z) {
+  return blocksPositionAt(player.position, x, z);
+}
+
+function moveBotWithCollision(bot, direction, speed, delta) {
+  const position = bot.avatar.position;
+  const distance = speed * delta;
+  const steps = Math.max(1, Math.ceil(distance / (playerRadius * 0.45)));
+  const stepDistance = distance / steps;
+  for (let step = 0; step < steps; step += 1) {
+    const nextX = position.x + direction.x * stepDistance;
+    const nextZ = position.z + direction.z * stepDistance;
+    if (!blocksPositionAt(position, nextX, position.z, 0.42)) position.x = nextX;
+    if (!blocksPositionAt(position, position.x, nextZ, 0.42)) position.z = nextZ;
+  }
+  if (activeMapId === 'd2') {
+    const floor = getMapGroundHeight(position.x, position.z, position.y + 5, position.y + 2, position.y);
+    if (floor !== null) position.y = floor;
+  }
+}
+
+function botHasLineOfSight(bot) {
+  const origin = bot.avatar.position.clone().add(new THREE.Vector3(0, 1.25, 0));
+  const target = player.position.clone().add(new THREE.Vector3(0, 1.25, 0));
+  const direction = target.sub(origin);
+  const distance = direction.length();
+  if (distance <= 0.01) return true;
+  direction.normalize();
+  if (activeMapId === 'd2' && d2CollisionBVH) {
+    const hits = d2CollisionBVH.raycast(new THREE.Ray(origin, direction), THREE.DoubleSide);
+    return !hits.some((hit) => hit.distance < distance - 0.35 && Math.abs(hit.face.normal.y) < 0.8);
+  }
+  const ray = new THREE.Ray(origin, direction);
+  return !colliders.some((collider) => {
+    const box = new THREE.Box3(
+      new THREE.Vector3(collider.minX, 0, collider.minZ),
+      new THREE.Vector3(collider.maxX, collider.height, collider.maxZ),
+    );
+    const hit = ray.intersectBox(box, new THREE.Vector3());
+    return hit && hit.distanceTo(origin) < distance - 0.35;
   });
 }
 
