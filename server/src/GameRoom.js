@@ -8,7 +8,7 @@ const SPAWN_POINTS = {
     // x, floor y, z — sampled from the imported D2 collision mesh.
     [-35, 4.95, -30], [0, 1.65, -25], [35, 4.95, 5], [10, 4.95, -8],
   ],
-  training: [[12, 10], [-12, 9], [0, 6], [-11, -8], [11, -8], [0, -3]],
+  training: [[12, 8], [-12, 8], [0, -3], [-3, 3], [3, -2]],
 };
 
 class PlayerState extends Schema {
@@ -158,7 +158,7 @@ export class GameRoom extends Room {
       const target = this.state.players.get(impact.targetId);
       if (!target?.alive) continue;
       const distance = Math.hypot(attacker.x - target.x, attacker.y - target.y, attacker.z - target.z);
-      if (distance > 36) continue;
+      if (distance > (weapon === 'shotgun' ? 16 : 36)) continue;
       const headshot = Boolean(impact.headshot);
       const damage = weapon === 'shotgun' ? (headshot ? 24 : 15) : (headshot ? 100 : 34);
       target.health = Math.max(0, target.health - damage);

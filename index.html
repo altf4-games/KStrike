@@ -38,6 +38,7 @@
           <button id="create-room-button" class="button--secondary" type="button">CREATE ROOM</button>
         </div>
         <div class="lobby__join"><input id="room-code-input" maxlength="6" placeholder="ROOM CODE" /><button id="join-room-button" class="button--secondary" type="button">JOIN</button></div>
+        <div class="lobby__solo"><small>OFFLINE MODE</small><button id="singleplayer-button" class="button--secondary" type="button">SINGLEPLAYER // TRAINING</button></div>
         <p class="lobby__status" id="lobby-status">CONNECT TO A LOCAL SERVER TO PLAY</p>
         <footer class="lobby__credits">
           <span>MADE BY <b>ALTF4 GAMES</b> — PRADYUM MISTRY</span>
@@ -56,6 +57,7 @@
       <div class="kill-feed" id="kill-feed" aria-live="polite"></div>
       <div class="hit-marker" id="hit-marker" aria-hidden="true"><i></i><b></b></div>
       <div class="kill-streak" id="kill-streak" aria-live="polite"></div>
+      <section class="death-screen" id="death-screen" hidden aria-live="assertive"><p>YOU WERE ELIMINATED</p><strong id="respawn-countdown">RESPAWNING</strong></section>
       <section class="scoreboard" id="scoreboard" hidden><header><span>DEATHMATCH</span><strong id="scoreboard-room">ROOM // LOCAL</strong><small>HOLD TAB</small></header><div id="scoreboard-players"></div></section>
       <div class="crosshair" aria-hidden="true"><i></i><b></b><em></em><span></span></div>
       <div class="weapon-hud" aria-live="polite"><small id="weapon-name">AR-01 / AUTO</small><strong id="ammo-count">30 <i>/</i> 90</strong><span id="reload-status"></span></div>

@@ -342,11 +342,14 @@ const hitMarker = document.querySelector('#hit-marker');
 const scoreboard = document.querySelector('#scoreboard');
 const scoreboardRoom = document.querySelector('#scoreboard-room');
 const scoreboardPlayers = document.querySelector('#scoreboard-players');
+const deathScreen = document.querySelector('#death-screen');
+const respawnCountdown = document.querySelector('#respawn-countdown');
 const lobby = document.querySelector('#lobby-screen');
 const lobbyStatus = document.querySelector('#lobby-status');
 const nicknameInput = document.querySelector('#nickname-input');
 const roomCodeInput = document.querySelector('#room-code-input');
 const quickMatchButton = document.querySelector('#quick-match-button');
+const singleplayerButton = document.querySelector('#singleplayer-button');
 const createRoomButton = document.querySelector('#create-room-button');
 const joinRoomButton = document.querySelector('#join-room-button');
 const mapSelect = document.querySelector('#map-select');
@@ -367,6 +370,14 @@ let activeMapId = 'd2';
 let killStreak = 0;
 let localPositionInitialized = false;
 let voidRecoveryPending = false;
+let singlePlayerMode = false;
+let soloHealth = 100;
+let soloKills = 0;
+let soloDeaths = 0;
+let soloRespawnAt = 0;
+let soloMatchEndsAt = 0;
+let soloMatchFinished = false;
+const soloBots = [];
 
 const streakCards = [
   { title: 'FIRST BLOOD', detail: '1 ELIMINATION' },
@@ -541,6 +552,8 @@ function updateCombatHud() {
     const justRespawned = !localAlive && local.alive;
     localAlive = local.alive;
     healthCount.textContent = local.alive ? local.health : `R${local.respawnSeconds}`;
+    deathScreen.hidden = local.alive;
+    if (!local.alive) respawnCountdown.textContent = `RESPAWNING IN ${local.respawnSeconds}`;
     if (justDied) {
       killStreak = 0;
       updateKillStreak();
@@ -550,6 +563,7 @@ function updateCombatHud() {
       player.position.set(local.x, local.y, local.z);
       playerVelocity.set(0, 0, 0); horizontalVelocity.set(0, 0, 0);
       snapPlayerToMapGround();
+      deathScreen.hidden = true;
     }
     if (!localPositionInitialized) {
       player.position.set(local.x, local.y, local.z);
@@ -591,6 +605,17 @@ function addKillFeed(message) {
 }
 
 function renderScoreboard() {
+  if (singlePlayerMode) {
+    scoreboardRoom.textContent = `SOLO // ${mapPresentation[activeMapId]?.code || 'ARENA'}`;
+    const entries = [
+      { nickname: 'YOU', kills: soloKills, deaths: soloDeaths, alive: localAlive, self: true },
+      ...soloBots.map((bot) => ({ nickname: bot.avatar.userData.nickname, kills: bot.kills || 0, deaths: bot.deaths || 0, alive: bot.alive })),
+    ].sort((a, b) => b.kills - a.kills);
+    scoreboardPlayers.innerHTML = '<div class="scoreboard__row"><span>PLAYER</span><span>KILLS</span><span>DEATHS</span><span>STATUS</span></div>' + entries
+      .map((entry) => `<div class="scoreboard__row${entry.self ? ' scoreboard__row--self' : ''}"><span>${entry.nickname}</span><span>${entry.kills}</span><span>${entry.deaths}</span><span>${entry.alive ? 'ALIVE' : 'RESPAWN'}</span></div>`)
+      .join('');
+    return;
+  }
   if (!multiplayerRoom?.state?.players) return;
   const rows = [...multiplayerRoom.state.players.entries()]
     .sort(([, a], [, b]) => b.kills - a.kills)
@@ -723,6 +748,43 @@ async function startMatchConnection(options = {}) {
 
 function generateRoomCode() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
 quickMatchButton.addEventListener('click', () => connectToMatch().catch(() => {}));
+function startSinglePlayer() {
+  singlePlayerMode = true;
+  activeMapId = selectedMapId;
+  applyArenaMap(activeMapId);
+  updateMapPresentation(activeMapId);
+  const [spawnX, spawnY, spawnZ] = (soloSpawnPoints[activeMapId] || soloSpawnPoints.training)[0];
+  player.position.set(spawnX, spawnY, spawnZ);
+  playerVelocity.set(0, 0, 0);
+  horizontalVelocity.set(0, 0, 0);
+  localAlive = true;
+  soloHealth = 100;
+  soloKills = 0;
+  soloDeaths = 0;
+  soloMatchEndsAt = performance.now() + 300000;
+  soloMatchFinished = false;
+  deathScreen.hidden = true;
+  healthCount.textContent = soloHealth;
+  localPositionInitialized = true;
+  magazine = weaponAmmo.rifle.magazine;
+  reserveAmmo = weaponAmmo.rifle.reserve;
+  activeWeapon = 'rifle';
+  weaponModel.visible = weaponModel.children.length > 0;
+  fallbackWeapon.visible = weaponModel.children.length === 0;
+  shotgunModel.visible = false;
+  updateAmmo();
+  networkStatus.textContent = 'OFFLINE // SOLO';
+  roomOverlay.textContent = `SOLO // ${mapPresentation[activeMapId]?.code || 'ARENA'}`;
+  matchTimer.textContent = 'SOLO // 0 KILLS';
+  intro.querySelector('.eyebrow').textContent = `SINGLEPLAYER // ${mapPresentation[activeMapId]?.code || 'ARENA'}`;
+  intro.querySelector('.intro__copy').innerHTML = 'Offline deathmatch against local NPCs.<br />No server connection required.';
+  enterButton.innerHTML = 'ENTER SOLO MATCH <span>&gt;</span>';
+  spawnSoloBots();
+  lobby.hidden = true;
+  intro.hidden = false;
+  exitMatchButton.hidden = false;
+}
+singleplayerButton.addEventListener('click', startSinglePlayer);
 mapButtons.forEach((button) => button.addEventListener('click', () => selectMap(button.dataset.map)));
 createRoomButton.addEventListener('click', () => {
   const roomCode = generateRoomCode();
@@ -786,6 +848,163 @@ function updateRemotePlayers(delta) {
     rifle.visible = avatar.userData.weapon !== 'shotgun';
     shotgun.visible = avatar.userData.weapon === 'shotgun';
   });
+}
+
+const soloSpawnPoints = {
+  d2: [[-35, 4.98, -30], [0, 1.68, -25], [35, 4.98, 5], [10, 4.98, -8]],
+  training: [[0, 0, -3], [-12, 0, 8], [12, 0, 8], [3, 0, -2]],
+};
+
+function clearSoloBots() {
+  soloBots.splice(0).forEach((bot) => {
+    remotePlayers.delete(bot.id);
+    scene.remove(bot.avatar);
+  });
+}
+
+function addSoloFeed(text) {
+  const item = document.createElement('p');
+  item.innerHTML = `<b>SOLO</b> <i>${text}</i>`;
+  killFeed.prepend(item);
+  window.setTimeout(() => item.remove(), 2500);
+}
+
+function spawnSoloBots() {
+  clearSoloBots();
+  const points = soloSpawnPoints[activeMapId] || soloSpawnPoints.training;
+  points.slice(1, 4).forEach(([x, y, z], index) => {
+    const avatar = createRemotePlayer(`BOT-${index + 1}`);
+    const bot = {
+      id: `solo-bot-${index}`,
+      avatar,
+      spawn: new THREE.Vector3(x, y, z),
+      patrol: new THREE.Vector3(x + (index - 1) * 2, y, z + (index % 2 ? 2 : -2)),
+      health: 100,
+      kills: 0,
+      deaths: 0,
+      alive: true,
+      respawnAt: 0,
+      lastShotAt: performance.now() + index * 260,
+    };
+    avatar.position.copy(bot.spawn);
+    avatar.userData.target.copy(bot.spawn);
+    avatar.userData.soloBot = bot;
+    avatar.userData.action = 'idle';
+    remotePlayers.set(bot.id, avatar);
+    soloBots.push(bot);
+  });
+}
+
+function damageSoloBot(bot, headshot) {
+  if (!singlePlayerMode || !bot.alive) return;
+  bot.health -= headshot ? 100 : activeWeapon === 'shotgun' ? 15 : 34;
+  hitMarkerUntil = performance.now() + 120;
+  screenShake = 1;
+  playGameSound('hit', { volume: 0.24 });
+  if (bot.health > 0) return;
+  bot.alive = false;
+  bot.deaths += 1;
+  bot.respawnAt = performance.now() + 3000;
+  bot.avatar.visible = false;
+  soloKills += 1;
+  killStreak += 1;
+  reserveAmmo = Math.min(weaponDefinitions[activeWeapon].reserveCap, reserveAmmo + weaponDefinitions[activeWeapon].magazineSize);
+  updateAmmo();
+  updateKillStreak();
+  addSoloFeed(`ELIMINATED ${bot.avatar.userData.nickname}`);
+}
+
+function damageSoloPlayer(amount, attacker) {
+  if (!singlePlayerMode || !localAlive) return;
+  soloHealth = Math.max(0, soloHealth - amount);
+  healthCount.textContent = soloHealth;
+  screenShake = 1;
+  if (soloHealth > 0) return;
+  localAlive = false;
+  soloDeaths += 1;
+  if (attacker) attacker.kills += 1;
+  soloRespawnAt = performance.now() + 2500;
+  killStreak = 0;
+  updateKillStreak();
+  addSoloFeed('YOU WERE ELIMINATED');
+  deathScreen.hidden = false;
+  respawnCountdown.textContent = 'RESPAWNING IN 3';
+}
+
+function updateSoloBots(now, delta) {
+  if (!singlePlayerMode) return;
+  const secondsRemaining = Math.max(0, Math.ceil((soloMatchEndsAt - now) / 1000));
+  const minutes = Math.floor(secondsRemaining / 60);
+  matchTimer.textContent = `${String(minutes).padStart(2, '0')}:${String(secondsRemaining % 60).padStart(2, '0')}`;
+  if (secondsRemaining === 0) {
+    if (!soloMatchFinished) {
+      soloMatchFinished = true;
+      triggerHeld = false;
+      keys.clear();
+      const entries = [
+        { nickname: 'YOU', kills: soloKills, deaths: soloDeaths },
+        ...soloBots.map((bot) => ({ nickname: bot.avatar.userData.nickname, kills: bot.kills || 0, deaths: bot.deaths || 0 })),
+      ].sort((a, b) => b.kills - a.kills);
+      winnerName.textContent = entries[0]?.nickname === 'YOU' ? 'YOU WIN' : `${entries[0]?.nickname || 'NO WINNER'} WINS`;
+      resultScores.innerHTML = entries.map((entry, index) => `<p><span>${index + 1}. ${entry.nickname}</span><b>${entry.kills} K / ${entry.deaths} D</b></p>`).join('');
+      matchResult.hidden = false;
+    }
+    return;
+  }
+  if (!localAlive && now >= soloRespawnAt) {
+    const [x, y, z] = (soloSpawnPoints[activeMapId] || soloSpawnPoints.training)[0];
+    player.position.set(x, y, z);
+    playerVelocity.set(0, 0, 0);
+    horizontalVelocity.set(0, 0, 0);
+    soloHealth = 100;
+    healthCount.textContent = soloHealth;
+    localAlive = true;
+    deathScreen.hidden = true;
+    addSoloFeed('RESPAWNED');
+  }
+  soloBots.forEach((bot) => {
+    if (!bot.alive) {
+      if (now < bot.respawnAt) return;
+      bot.health = 100;
+      bot.alive = true;
+      bot.avatar.visible = true;
+      bot.avatar.position.copy(bot.spawn);
+      bot.avatar.userData.target.copy(bot.spawn);
+      bot.avatar.userData.action = 'idle';
+      return;
+    }
+    const toPlayer = player.position.clone().sub(bot.avatar.position);
+    const distance = Math.hypot(toPlayer.x, toPlayer.z);
+    // Keep every offline opponent visibly moving even when the player is far
+    // away, then have it run toward the player once they are nearby.
+    if (distance >= 22) {
+      const patrolTime = now * 0.001 + soloBots.indexOf(bot) * 1.9;
+      bot.patrol.set(
+        bot.spawn.x + Math.sin(patrolTime) * 3.2,
+        bot.spawn.y,
+        bot.spawn.z + Math.cos(patrolTime * 0.8) * 3.2,
+      );
+    }
+    const goal = distance < 22 ? player.position : bot.patrol;
+    const directionToGoal = goal.clone().sub(bot.avatar.position);
+    directionToGoal.y = 0;
+    if (directionToGoal.lengthSq() > 0.3) {
+      directionToGoal.normalize();
+      const speed = distance < 22 ? 3.1 : 2;
+      bot.avatar.position.addScaledVector(directionToGoal, speed * delta);
+      bot.avatar.userData.target.copy(bot.avatar.position);
+      bot.avatar.userData.rotation = Math.atan2(-directionToGoal.x, -directionToGoal.z);
+      bot.avatar.userData.action = distance < 19 ? 'run' : 'walk';
+    } else bot.avatar.userData.action = 'idle';
+    if (localAlive && distance < 18 && now - bot.lastShotAt > 850) {
+      bot.lastShotAt = now;
+      bot.avatar.userData.action = 'fire';
+      bot.avatar.userData.shotUntil = now + 90;
+      playGameSound(bot.avatar.userData.weapon === 'shotgun' ? 'shotgun' : 'fire', { volume: 0.08 });
+      if (Math.random() < 0.68) damageSoloPlayer(9, bot);
+    }
+  });
+  if (!localAlive) respawnCountdown.textContent = `RESPAWNING IN ${Math.max(1, Math.ceil((soloRespawnAt - now) / 1000))}`;
 }
 playAgainButton.addEventListener('click', () => { matchResult.hidden = true; });
 
@@ -1049,22 +1268,29 @@ function fire(now) {
       ? new THREE.Vector2()
       : new THREE.Vector2((Math.random() - 0.5) * definition.spread, (Math.random() - 0.5) * definition.spread);
     raycaster.setFromCamera(crosshairOffset, camera);
+    raycaster.far = activeWeapon === 'shotgun' ? 16 : Infinity;
     const hit = raycaster.intersectObjects(shootables, true)[0];
     const playerHit = raycaster.intersectObjects([...remotePlayers.values()], true)[0];
     if (playerHit && (!hit || playerHit.distance < hit.distance)) {
       let owner = playerHit.object;
-      while (owner && !owner.userData.sessionId) owner = owner.parent;
+      while (owner && !owner.userData.sessionId && !owner.userData.soloBot) owner = owner.parent;
+      if (owner?.userData.soloBot) {
+        damageSoloBot(owner.userData.soloBot, playerHit.point.y - owner.position.y > 1.15);
+        continue;
+      }
       if (owner?.userData.sessionId) {
         impacts.push({ targetId: owner.userData.sessionId, headshot: playerHit.point.y - owner.position.y > 1.15 });
         continue;
       }
     }
-    // One visible mark is enough for a spread blast and avoids decal spam.
-    if (hit && pellet === 0) {
+    // Each shotgun pellet can leave its own mark, making the close-range
+    // spread readable on walls without exceeding the global decal cap.
+    if (hit) {
       addDecal(hit);
       if (hit.object.userData.isTarget) hit.object.userData.hitUntil = now + 110;
     }
   }
+  raycaster.far = Infinity;
   if (impacts.length) multiplayerRoom?.send('shoot', { weapon: activeWeapon, impacts });
 }
 function updateWeapon(now, delta) {
@@ -1171,6 +1397,13 @@ function moveWithCollision(delta) {
 }
 
 function movePlayer(delta) {
+  if (!localAlive || (singlePlayerMode && soloMatchFinished)) {
+    horizontalVelocity.set(0, 0, 0);
+    playerVelocity.set(0, 0, 0);
+    playerAction = 'idle';
+    speedReadout.textContent = '0.0';
+    return;
+  }
   direction.set(0, 0, 0);
   if (locked && keys.has("KeyW")) direction.z -= 1;
   if (locked && keys.has("KeyS")) direction.z += 1;
@@ -1272,7 +1505,7 @@ function movePlayer(delta) {
 }
 
 function lockArena() {
-  connectToMatch();
+  if (!singlePlayerMode) connectToMatch();
   if (!document.fullscreenElement && document.fullscreenEnabled)
     document.documentElement.requestFullscreen().catch(() => {});
   canvas.requestPointerLock();
@@ -1287,13 +1520,23 @@ async function leaveToMainMenu() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   remotePlayers.forEach((avatar) => scene.remove(avatar));
   remotePlayers.clear();
+  clearSoloBots();
   killFeed.replaceChildren();
   matchResult.hidden = true;
   killStreak = 0;
   updateKillStreak();
+  deathScreen.hidden = true;
   localAlive = true;
   localPositionInitialized = false;
   voidRecoveryPending = false;
+  soloMatchFinished = false;
+  const wasSinglePlayer = singlePlayerMode;
+  singlePlayerMode = false;
+  if (wasSinglePlayer && activeMapId !== selectedMapId) {
+    activeMapId = selectedMapId;
+    applyArenaMap(activeMapId);
+    updateMapPresentation(activeMapId);
+  }
   networkStatus.textContent = 'OFFLINE // MAIN MENU';
   exitMatchButton.hidden = true;
   intro.hidden = true;
@@ -1363,6 +1606,7 @@ function animate() {
   movePlayer(delta);
   updateWeapon(now, delta);
   syncMultiplayer(now);
+  updateSoloBots(now, delta);
   updateRemotePlayers(delta);
   updateCombatHud();
   hitMarker.classList.toggle('hit-marker--active', now < hitMarkerUntil);
